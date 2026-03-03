@@ -78,10 +78,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users can read all profiles, only write their own
+    // Users: anyone can read profiles (needed for username search before login)
+    // Only the owner can write their own document
     match /users/{uid} {
-      allow read: if request.auth != null;
-      allow write: if request.auth.uid == uid;
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == uid;
 
       // Friend requests: only the recipient can read/update
       match /friendRequests/{fromUid} {
