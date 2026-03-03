@@ -31,7 +31,7 @@
    🔥 FIREBASE CONFIG — replace with your own project values
    Get these from: Firebase Console → Project Settings → Your apps
    ============================================================ */
-const FIREBASE_CONFIG = {
+const firebaseConfig = {
   apiKey: "AIzaSyB_EbCKQjK1n84E_WAxTqTzz0hWHWpx8qI",
   authDomain: "circle-6c870.firebaseapp.com",
   projectId: "circle-6c870",
@@ -278,32 +278,62 @@ function AuthScreen({ onAuth }) {
     setLoading(true);
     try {
       if (mode === "register") {
-        if (!name.trim())     { setErr("Please enter your name."); setLoading(false); return; }
-        if (!username.trim()) { setErr("Please choose a username."); setLoading(false); return; }
+        if (!name.trim())        { setErr("Please enter your name."); setLoading(false); return; }
+        if (!username.trim())    { setErr("Please choose a username."); setLoading(false); return; }
         if (/\s/.test(username)) { setErr("No spaces in username."); setLoading(false); return; }
+        if (pass.length < 6)     { setErr("Password must be at least 6 characters."); setLoading(false); return; }
 
-        // Check username is unique
         const un = username.trim().toLowerCase();
-        const snap = await db.collection("users").where("username","==",un).limit(1).get();
-        if (!snap.empty) { setErr("Username already taken."); setLoading(false); return; }
 
-        const cred = await auth.createUserWithEmailAndPassword(email.trim(), pass);
-        await cred.user.updateProfile({ displayName: name.trim() });
-        await db.collection("users").doc(cred.user.uid).set({
-          uid: cred.user.uid,
-          displayName: name.trim(),
-          username: un,
-          bio: bio.trim(),
-          location: location.trim(),
-          email: email.trim(),
-          online: true,
-          createdAt: nowTs(),
-        });
+        // 1. Create the Firebase Auth account first (gives us an authenticated session)
+        let cred;
+        try {
+          cred = await auth.createUserWithEmailAndPassword(email.trim(), pass);
+        } catch(authErr) {
+          const msgs = {
+            "auth/email-already-in-use": "Email already registered.",
+            "auth/weak-password": "Password must be at least 6 characters.",
+            "auth/invalid-email": "Invalid email address.",
+          };
+          setErr(msgs[authErr.code] || authErr.message);
+          setLoading(false); return;
+        }
+
+        // 2. Now we're authenticated — safe to read/write Firestore
+        try {
+          // Check username uniqueness
+          const snap = await db.collection("users").where("username","==",un).limit(1).get();
+          if (!snap.empty) {
+            // Username taken — delete the auth account we just made and bail
+            await cred.user.delete();
+            setErr("Username already taken. Please choose another.");
+            setLoading(false); return;
+          }
+
+          await cred.user.updateProfile({ displayName: name.trim() });
+          await db.collection("users").doc(cred.user.uid).set({
+            uid: cred.user.uid,
+            displayName: name.trim(),
+            username: un,
+            bio: bio.trim(),
+            location: location.trim(),
+            email: email.trim(),
+            online: true,
+            createdAt: nowTs(),
+          });
+        } catch(dbErr) {
+          // If Firestore write fails, clean up the auth account
+          try { await cred.user.delete(); } catch(_) {}
+          setErr("Could not save profile: " + dbErr.message);
+          setLoading(false); return;
+        }
+
       } else {
         await auth.signInWithEmailAndPassword(email.trim(), pass);
-        // Update online status
         const u = auth.currentUser;
-        if (u) await db.collection("users").doc(u.uid).update({ online: true });
+        if (u) {
+          try { await db.collection("users").doc(u.uid).update({ online: true }); } catch(_) {}
+        }
       }
     } catch(e) {
       const msgs = {
