@@ -4,12 +4,19 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="theme-color" content="#080808"/>
   <title>Cercle</title>
+
+  <!-- React -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase v10 (modular via compat shim — works in plain HTML) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
     html,body,#root{height:100%;width:100%;}
@@ -18,625 +25,1035 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel">
-const {useState,useRef,useEffect}=React;
 
-/* ── LOCALSTORAGE ── */
-const LS={
-  get:(k,d=null)=>{try{const v=localStorage.getItem(k);return v!=null?JSON.parse(v):d;}catch{return d;}},
-  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}},
-  del:(k)=>{try{localStorage.removeItem(k);}catch{}}
+<script>
+/* ============================================================
+   🔥 FIREBASE CONFIG — replace with your own project values
+   Get these from: Firebase Console → Project Settings → Your apps
+   ============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
 };
 
-/* ── HELPERS ── */
-const PAL=["#c9a96e","#9e7a8c","#7a8fa6","#6b8c6e","#a67c52","#8c8c7a","#7a6e8c","#8c6e7a","#6e8c8c","#a67a6e"];
-function cid(id){let h=0;for(let i=0;i<(id||"x").length;i++)h=(id||"x").charCodeAt(i)+((h<<5)-h);return PAL[Math.abs(h)%PAL.length];}
-function ini(n){return(n||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();}
-function now(){const d=new Date();const h=d.getHours(),m=d.getMinutes();return`${h}:${m<10?"0"+m:m}`;}
-const NAMES=["Oliver Marsh","Elena Voss","Kai Brennan","Lena Storm","Marco Frei","Yuki Tanaka","Priya Sen","Finn Cole","Zara King","Leo Hunt","Mia Rivers","Jake Moore"];
-const COVERS=["ca","cb","cc","cd","ce"];
+firebase.initializeApp(FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db   = firebase.firestore();
+</script>
 
-/* ── AVATAR ── */
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─────────────────────────────────────────────
+   UTILS
+───────────────────────────────────────────── */
+const PAL = ["#c9a96e","#9e7a8c","#7a8fa6","#6b8c6e","#a67c52","#8c8c7a","#7a6e8c","#8c6e7a","#6e8c8c","#a67a6e"];
+function cid(id){ let h=0; for(let i=0;i<(id||"x").length;i++) h=(id||"x").charCodeAt(i)+((h<<5)-h); return PAL[Math.abs(h)%PAL.length]; }
+function ini(n){ return(n||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(); }
+function nowTs(){ return firebase.firestore.FieldValue.serverTimestamp(); }
+function fmtTime(ts){ if(!ts) return ""; const d=ts.toDate?ts.toDate():new Date(ts); const h=d.getHours(),m=d.getMinutes(); return`${h}:${m<10?"0"+m:m}`; }
+function chatId(a,b){ return [a,b].sort().join("_"); }
+
+/* ─────────────────────────────────────────────
+   AVATAR
+───────────────────────────────────────────── */
 function Av({user,size=40,dot=false}){
-  const c=cid(user?.id||user?.username||"x");
+  const c = cid(user?.uid||user?.username||"x");
   return(
     <div style={{position:"relative",display:"inline-block",flexShrink:0}}>
       <div style={{width:size,height:size,borderRadius:"50%",background:`linear-gradient(135deg,${c}cc,${c}44)`,border:`1.5px solid ${c}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.32,fontFamily:"'DM Sans',sans-serif",fontWeight:500,color:"#f5f0e8",userSelect:"none"}}>
-        {ini(user?.name||"?")}
+        {ini(user?.displayName||user?.name||"?")}
       </div>
-      {dot&&<div style={{position:"absolute",bottom:1,right:1,width:size*.26,height:size*.26,borderRadius:"50%",background:user?.status==="online"?"#6db87a":"#383838",border:"1.5px solid #080808"}}/>}
+      {dot&&<div style={{position:"absolute",bottom:1,right:1,width:size*.26,height:size*.26,borderRadius:"50%",background:user?.online?"#6db87a":"#383838",border:"1.5px solid #0a0a0a"}}/>}
     </div>
   );
 }
 
-/* ── ICONS ── */
-const I=({n,s=20,c="currentColor"})=>{
-  const d={
-    chat:<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
-    users:<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
-    cal:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
-    img:<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>,
-    bell:<><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
-    send:<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>,
-    plus:<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
-    x:<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
-    pin:<><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></>,
-    heart:<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>,
-    hf:<path fill={c} d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>,
-    search:<><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
-    ok:<polyline points="20 6 9 17 4 12"/>,
-    loc:<><circle cx="12" cy="12" r="3"/><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/></>,
-    map:<><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></>,
-    edit:<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
-    out:<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
-    back:<polyline points="15 18 9 12 15 6"/>,
-    photo:<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>,
-    smile:<><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></>,
-    user:<><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+/* ─────────────────────────────────────────────
+   ICONS
+───────────────────────────────────────────── */
+const I = ({n,s=20,c="currentColor"}) => {
+  const p = {
+    chat:    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
+    users:   <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    calendar:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+    image:   <><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>,
+    bell:    <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
+    send:    <><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>,
+    x:       <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+    pin:     <><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></>,
+    heart:   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>,
+    heartF:  <path fill={c} d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>,
+    search:  <><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
+    check:   <polyline points="20 6 9 17 4 12"/>,
+    location:<><circle cx="12" cy="12" r="3"/><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/></>,
+    map:     <><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></>,
+    edit:    <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
+    logout:  <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+    arrow:   <><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>,
+    back:    <polyline points="15 18 9 12 15 6"/>,
+    user:    <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+    userP:   <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></>,
+    eye:     <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>,
+    eyeOff:  <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>,
   };
-  return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{d[n]}</svg>;
+  return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{p[n]}</svg>;
 };
 
-/* ══ CSS ══ */
-const CSS=`
+const COVERS = ["cov-a","cov-b","cov-c","cov-d","cov-e"];
+
+/* ─────────────────────────────────────────────
+   CSS
+───────────────────────────────────────────── */
+const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;overscroll-behavior:none;}
-body{font-family:'DM Sans',sans-serif;color:#f0ebe0;background:#080808;}
-::-webkit-scrollbar{width:0;height:0;}
+html,body{height:100%;background:#080808;overscroll-behavior:none;}
+body{font-family:'DM Sans',sans-serif;color:#f0ebe0;}
+::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:#222;border-radius:2px;}
 
-/* ONBOARDING */
-.ob{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px 20px;position:relative;overflow:hidden;background:#060606;}
-.ob-bg{position:absolute;inset:0;background:radial-gradient(ellipse 100% 50% at 50% -10%,#281a08,transparent 60%);}
-.ob-glow{position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(#c9a96e08,transparent 70%);top:-180px;left:50%;transform:translateX(-50%);}
-.ob-card{position:relative;z-index:1;width:100%;max-width:400px;}
-.ob-logo{display:flex;align-items:center;gap:10px;margin-bottom:40px;}
-.ob-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#c9a96e18,#c9a96e44);border:1px solid #c9a96e33;display:flex;align-items:center;justify-content:center;}
-.ob-wm{font-family:'Cormorant Garamond',serif;font-size:20px;color:#e8e3d8;letter-spacing:.06em;}
-.ob-step{animation:su .36s cubic-bezier(.22,1,.36,1) both;}
-@keyframes su{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
-.ob-h{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;color:#f0ebe0;line-height:1.2;margin-bottom:8px;}
-.ob-h em{font-style:italic;color:#c9a96e;}
-.ob-sub{font-size:14px;color:#666;line-height:1.65;margin-bottom:32px;}
-.ob-feats{display:grid;gap:9px;margin-bottom:32px;}
-.ob-feat{display:flex;align-items:center;gap:12px;padding:12px 13px;background:#0c0c0c;border:1px solid #181818;border-radius:11px;}
-.ob-fi{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.ob-fl{font-size:13px;color:#888;line-height:1.4;}
-.ob-f{margin-bottom:14px;}
-.ob-f label{display:block;font-size:10px;color:#555;letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;}
-.ob-in{width:100%;background:#0e0e0e;border:1px solid #1e1e1e;border-radius:11px;padding:13px 15px;color:#e8e3d8;font-size:16px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none;}
-.ob-in:focus{border-color:#c9a96e44;box-shadow:0 0 0 3px #c9a96e09;}
-.ob-in::placeholder{color:#333;}
-.ob-btn{width:100%;padding:14px;border-radius:11px;border:none;background:linear-gradient(135deg,#c9a96e,#9a6e22);color:#0a0a0a;font-size:15px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px;-webkit-appearance:none;}
-.ob-btn:active{transform:scale(.97);}
-.ob-btn:disabled{opacity:.35;}
-.ob-dots{display:flex;gap:5px;margin-bottom:26px;}
-.ob-dot{height:2px;border-radius:2px;background:#1e1e1e;transition:all .3s;}
-.ob-dot.on{background:#c9a96e;}
-.ob-err{background:#160808;border:1px solid #331212;border-radius:9px;padding:9px 13px;font-size:13px;color:#c97070;margin-bottom:11px;}
+/* AUTH */
+.auth-wrap{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px 20px;position:relative;overflow:hidden;background:#060606;}
+.auth-bg{position:absolute;inset:0;background:radial-gradient(ellipse 100% 50% at 50% -10%,#281a08,transparent 60%);}
+.auth-glow{position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(#c9a96e08,transparent 70%);top:-180px;left:50%;transform:translateX(-50%);}
+.auth-card{position:relative;z-index:1;width:100%;max-width:400px;}
+.auth-logo{display:flex;align-items:center;gap:10px;margin-bottom:40px;}
+.auth-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#c9a96e18,#c9a96e44);border:1px solid #c9a96e33;display:flex;align-items:center;justify-content:center;}
+.auth-wm{font-family:'Cormorant Garamond',serif;font-size:20px;color:#e8e3d8;letter-spacing:.06em;}
+.auth-h{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:#f0ebe0;line-height:1.2;margin-bottom:6px;}
+.auth-h em{font-style:italic;color:#c9a96e;}
+.auth-sub{font-size:13px;color:#555;margin-bottom:28px;line-height:1.6;}
+.auth-f{margin-bottom:13px;}
+.auth-f label{display:block;font-size:10px;color:#555;letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px;}
+.auth-in{width:100%;background:#0e0e0e;border:1px solid #1e1e1e;border-radius:11px;padding:13px 15px;color:#e8e3d8;font-size:16px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s;-webkit-appearance:none;}
+.auth-in:focus{border-color:#c9a96e44;box-shadow:0 0 0 3px #c9a96e08;}
+.auth-in::placeholder{color:#333;}
+.auth-pw{position:relative;}
+.auth-pw .auth-in{padding-right:44px;}
+.auth-pw-toggle{position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;color:#484848;cursor:pointer;display:flex;padding:4px;}
+.auth-btn{width:100%;padding:14px;border-radius:11px;border:none;background:linear-gradient(135deg,#c9a96e,#9a6e22);color:#0a0a0a;font-size:15px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:4px;-webkit-appearance:none;transition:opacity .2s;}
+.auth-btn:disabled{opacity:.5;cursor:not-allowed;}
+.auth-btn:active:not(:disabled){opacity:.85;}
+.auth-switch{font-size:13px;color:#555;text-align:center;margin-top:18px;}
+.auth-switch button{background:none;border:none;color:#c9a96e;cursor:pointer;font-size:13px;font-family:'DM Sans',sans-serif;padding:0;}
+.auth-err{background:#160808;border:1px solid #331212;border-radius:9px;padding:9px 13px;font-size:13px;color:#c97070;margin-bottom:13px;}
+.auth-ok{background:#091409;border:1px solid #1a3a1a;border-radius:9px;padding:9px 13px;font-size:13px;color:#6db87a;margin-bottom:13px;}
+.auth-divider{display:flex;align-items:center;gap:10px;margin:16px 0;}
+.auth-divider span{font-size:11px;color:#333;}
+.auth-divider::before,.auth-divider::after{content:'';flex:1;height:1px;background:#1e1e1e;}
 
-/* APP SHELL */
-.app{display:flex;height:100dvh;background:#080808;overflow:hidden;position:relative;}
-
-/* DESKTOP: side nav on left */
-@media(min-width:768px){
-  .app{flex-direction:row;}
-  .sidebar{display:flex!important;flex-direction:column;}
-  .botnav{display:none!important;}
-  .mob-hdr{display:none!important;}
-  .content{flex:1;display:flex;overflow:hidden;}
-  /* panels always visible on desktop */
-  .list-pane{display:flex!important;}
-  .detail-pane{display:flex!important;position:relative!important;transform:none!important;flex:1;}
-}
-
-/* MOBILE: bottom nav, full-screen panes */
-@media(max-width:767px){
-  .app{flex-direction:column;}
-  .sidebar{display:none!important;}
-  .content{flex:1;display:flex;flex-direction:column;overflow:hidden;}
-  .list-pane{display:flex;flex-direction:column;flex:1;overflow:hidden;}
-  .detail-pane{position:fixed!important;inset:0!important;z-index:300;background:#090909;transform:translateX(100%);transition:transform .28s cubic-bezier(.4,0,.2,1);display:flex!important;flex-direction:column;}
-  .detail-pane.open{transform:translateX(0)!important;}
-}
-
-/* SIDEBAR */
-.sidebar{width:64px;background:#0a0a0a;border-right:1px solid #141414;align-items:center;padding:16px 0;gap:4px;flex-shrink:0;}
-.nb{width:42px;height:42px;border-radius:11px;border:none;background:transparent;color:#484848;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s;position:relative;-webkit-appearance:none;}
+/* APP */
+.app{display:flex;height:100dvh;overflow:hidden;background:#060606;}
+.sidebar{width:64px;background:#0a0a0a;border-right:1px solid #141414;display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:4px;flex-shrink:0;}
+.nb{width:40px;height:40px;border-radius:11px;border:none;background:transparent;color:#484848;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s;position:relative;-webkit-appearance:none;}
 .nb:hover{background:#141414;color:#c9a96e;}
 .nb.on{background:#1a140a;color:#c9a96e;}
 .nb .bdg{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:#c9703a;border:1.5px solid #0a0a0a;}
-
-/* BOTTOM NAV */
-.botnav{flex-shrink:0;background:#0a0a0a;border-top:1px solid #141414;display:flex;align-items:stretch;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom,0px);z-index:100;}
-.bni{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 4px;border:none;background:transparent;color:#484848;cursor:pointer;position:relative;-webkit-appearance:none;min-height:54px;}
-.bni.on{color:#c9a96e;}
-.bni .bdg{position:absolute;top:6px;right:calc(50% - 14px);width:7px;height:7px;border-radius:50%;background:#c9703a;border:1.5px solid #0a0a0a;}
-.bni-lbl{font-size:9px;letter-spacing:.02em;text-transform:uppercase;font-weight:500;margin-top:1px;}
-
-/* MOBILE HEADER */
-.mob-hdr{background:#0a0a0a;border-bottom:1px solid #141414;padding:0 16px;padding-top:env(safe-area-inset-top,0px);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:54px;}
-.mob-hdr h2{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:400;color:#f0ebe0;}
-
-/* LIST PANE (conversations, friends, etc.) */
-.list-pane{background:#0a0a0a;width:280px;border-right:1px solid #141414;flex-shrink:0;overflow:hidden;}
-.lph{padding:14px 14px 10px;border-bottom:1px solid #141414;}
-.lpt{font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:400;color:#f0ebe0;}
-.lpl{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-.lpi{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;transition:background .14s;border-left:2px solid transparent;min-height:60px;}
-.lpi:active,.lpi.on{background:#110f09;}
-.lpi.on{border-left-color:#c9a96e;}
-
-/* DETAIL PANE (chat, event detail, etc.) */
-.detail-pane{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#090909;}
-.dphead{padding:11px 14px;border-bottom:1px solid #141414;display:flex;align-items:center;justify-content:space-between;background:#0a0a0a;flex-shrink:0;min-height:52px;}
-.ca{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch;}
-.msg{display:flex;gap:8px;max-width:80%;}
+.panel{width:280px;border-right:1px solid #141414;background:#0a0a0a;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
+.ph{padding:16px 16px 11px;border-bottom:1px solid #141414;}
+.pt{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:400;color:#f0ebe0;}
+.pl{flex:1;overflow-y:auto;}
+.pi{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;transition:background .14s;border-left:2px solid transparent;}
+.pi:hover{background:#0e0e0e;}
+.pi.on{background:#110f09;border-left-color:#c9a96e;}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#090909;}
+.mh{padding:14px 20px;border-bottom:1px solid #141414;display:flex;align-items:center;justify-content:space-between;background:#0a0a0a;flex-shrink:0;}
+.ca{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px;}
+.msg{display:flex;gap:8px;max-width:68%;}
 .msg.me{flex-direction:row-reverse;align-self:flex-end;}
-.bbl{padding:9px 13px;border-radius:15px;font-size:14px;line-height:1.55;word-break:break-word;}
-.msg.them .bbl{background:#161616;color:#d8d3c8;border-bottom-left-radius:3px;}
+.bbl{padding:9px 14px;border-radius:15px;font-size:14px;line-height:1.55;word-break:break-word;}
+.msg.them .bbl{background:#141414;color:#d8d3c8;border-bottom-left-radius:3px;}
 .msg.me .bbl{background:linear-gradient(135deg,#241c0f,#342812);color:#efe7cf;border-bottom-right-radius:3px;border:1px solid #c9a96e22;}
-.mt{font-size:10px;color:#333;margin-top:2px;}
+.mt{font-size:11px;color:#333;margin-top:2px;}
 .msg.me .mt{text-align:right;}
-.ia{padding:9px 13px;border-top:1px solid #141414;background:#0a0a0a;flex-shrink:0;padding-bottom:max(9px,env(safe-area-inset-bottom));}
-.ir{display:flex;gap:7px;align-items:flex-end;background:#0e0e0e;border:1px solid #1c1c1c;border-radius:22px;padding:6px 10px;}
-.ci{flex:1;background:transparent;border:none;outline:none;color:#ddd8cc;font-size:16px;font-family:'DM Sans',sans-serif;resize:none;line-height:1.5;max-height:80px;padding:1px 0;}
-.sb{width:32px;height:32px;border-radius:50%;border:none;background:linear-gradient(135deg,#c9a96e,#9a6e22);color:#0a0a0a;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-appearance:none;}
-.sb:active{transform:scale(.9);}
-.lbar{background:#091409;border-bottom:1px solid #142014;padding:5px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
-.pulse{animation:pls 2s infinite;}@keyframes pls{0%,100%{opacity:1;}50%{opacity:.4;}}
-
-/* BUTTONS */
-.btn{padding:7px 14px;border-radius:8px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;-webkit-appearance:none;min-height:34px;}
+.ia{padding:13px 20px;border-top:1px solid #141414;background:#0a0a0a;flex-shrink:0;}
+.ir{display:flex;gap:8px;align-items:flex-end;background:#0e0e0e;border:1px solid #1c1c1c;border-radius:13px;padding:6px 10px;}
+.ci{flex:1;background:transparent;border:none;outline:none;color:#ddd8cc;font-size:14px;font-family:'DM Sans',sans-serif;resize:none;line-height:1.5;max-height:90px;}
+.sb{width:30px;height:30px;border-radius:50%;border:none;background:linear-gradient(135deg,#c9a96e,#9a6e22);color:#0a0a0a;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .15s;}
+.sb:hover{transform:scale(1.08);}
+.btn{padding:6px 14px;border-radius:8px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;transition:all .18s;-webkit-appearance:none;}
 .gold{background:linear-gradient(135deg,#c9a96e,#9a6e22);color:#0a0a0a;}
-.gold:active{opacity:.82;}
-.gold:disabled{opacity:.35;}
+.gold:hover{transform:translateY(-1px);box-shadow:0 3px 12px #c9a96e22;}
+.gold:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none;}
 .ghost{background:transparent;border:1px solid #242424;color:#777;}
-.ghost:active{background:#111;}
-
-/* MODAL */
-.ov{position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(12px);display:flex;align-items:flex-end;justify-content:center;z-index:500;}
-@media(min-width:768px){.ov{align-items:center;padding:20px;}}
-.modal{background:#0e0e0e;border:1px solid #1e1e1e;border-radius:20px 20px 0 0;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-@media(min-width:768px){.modal{border-radius:18px;max-width:480px;}}
-.mhdr{padding:16px 18px 10px;border-bottom:1px solid #141414;display:flex;justify-content:space-between;align-items:center;}
-.mbody{padding:16px 18px;padding-bottom:max(16px,env(safe-area-inset-bottom));}
-.field{margin-bottom:12px;}
-.field label{display:block;font-size:10px;color:#555;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px;}
-.field input,.field textarea{width:100%;background:#080808;border:1px solid #1c1c1c;border-radius:9px;padding:11px 12px;color:#ddd8cc;font-size:16px;font-family:'DM Sans',sans-serif;outline:none;-webkit-appearance:none;}
+.ghost:hover{border-color:#383838;color:#aaa;}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;}
+.modal{background:#0c0c0c;border:1px solid #1c1c1c;border-radius:16px;width:100%;max-width:480px;max-height:86vh;overflow-y:auto;}
+.mhdr{padding:20px 20px 12px;border-bottom:1px solid #141414;display:flex;justify-content:space-between;align-items:center;}
+.mbody{padding:20px;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:11px;color:#555;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px;}
+.field input,.field textarea{width:100%;background:#080808;border:1px solid #1c1c1c;border-radius:9px;padding:9px 12px;color:#ddd8cc;font-size:14px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .18s;}
 .field input:focus,.field textarea:focus{border-color:#c9a96e33;}
-.field textarea{resize:none;min-height:68px;line-height:1.5;}
-.mpill{width:36px;height:4px;border-radius:2px;background:#2a2a2a;margin:8px auto 2px;}
-
-/* MISC */
-.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:9px;text-align:center;padding:32px;}
-.empty p{font-size:13px;color:#3a3a3a;max-width:200px;line-height:1.65;}
-.fade{animation:fd .24s ease both;}
-@keyframes fd{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
-.tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500;}
+.field textarea{resize:vertical;min-height:70px;line-height:1.5;}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:9px;text-align:center;padding:36px;}
+.empty p{font-size:13px;color:#3a3a3a;max-width:210px;line-height:1.65;}
+.fade{animation:fd .28s ease both;}
+@keyframes fd{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
+.tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500;}
 .tg{background:#0b1d0f;color:#6db87a;border:1px solid #1c4828;}
 .tm{background:#181200;color:#d4a84b;border:1px solid #443810;}
 .ti{background:#0e0e0e;color:#555;border:1px solid #222;}
 .evc{background:#0c0c0c;border:1px solid #181818;border-radius:13px;overflow:hidden;margin-bottom:9px;cursor:pointer;transition:border-color .2s;}
-.evc.sel,.evc:active{border-color:#c9a96e33;}
-.ecv-h{height:58px;}
-.ecb{padding:10px 12px;}
-.ca-a{background:linear-gradient(135deg,#18082a,#2c1948,#7a3a5e);}
-.ca-b{background:linear-gradient(135deg,#180808,#621a0e,#b85a28);}
-.ca-c{background:linear-gradient(135deg,#081408,#1e4018,#5a8840);}
-.ca-d{background:linear-gradient(135deg,#08081a,#181848,#38287a);}
-.ca-e{background:linear-gradient(135deg,#141008,#3a2c08,#8a7028);}
-.st{background:#0c0c0c;border:1px solid #181818;border-radius:10px;padding:11px;text-align:center;}
-.nf{padding:12px 14px;border-bottom:1px solid #0e0e0e;display:flex;gap:10px;align-items:flex-start;cursor:pointer;min-height:56px;}
+.evc:hover,.evc.sel{border-color:#c9a96e33;}
+.ecv{height:64px;}
+.ecb{padding:11px 13px;}
+.st{background:#0c0c0c;border:1px solid #181818;border-radius:10px;padding:12px;text-align:center;}
+.nf{padding:12px 16px;border-bottom:1px solid #0e0e0e;display:flex;gap:10px;align-items:flex-start;cursor:pointer;transition:background .14s;}
+.nf:hover{background:#0d0d0d;}
 .nf.ur{background:#0c0b07;}
-.ndot{width:6px;height:6px;border-radius:50%;background:#c9a96e;flex-shrink:0;margin-top:6px;}
-.pgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;}
-@media(min-width:480px){.pgrid{grid-template-columns:repeat(3,1fr);}}
-@media(min-width:800px){.pgrid{grid-template-columns:repeat(4,1fr);}}
-.pc{border-radius:11px;overflow:hidden;cursor:pointer;position:relative;aspect-ratio:1;}
-@media(hover:hover){.pc:hover .pov{opacity:1;}}
-.pc:active .pov{opacity:1;}
-.pov{position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;flex-direction:column;justify-content:flex-end;padding:9px;opacity:0;transition:opacity .2s;}
+.ndot{width:6px;height:6px;border-radius:50%;background:#c9a96e;flex-shrink:0;margin-top:7px;}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:11px;}
+.pc{border-radius:11px;overflow:hidden;cursor:pointer;position:relative;aspect-ratio:1;transition:transform .18s;}
+.pc:hover{transform:scale(1.025);}
+.pc:hover .pov{opacity:1;}
+.pov{position:absolute;inset:0;background:rgba(0,0,0,.48);display:flex;flex-direction:column;justify-content:flex-end;padding:10px;opacity:0;transition:opacity .18s;}
 .sw{position:relative;}.sw svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);}
-.si{background:#0e0e0e;border:1px solid #1c1c1c;border-radius:8px;padding:9px 12px 9px 30px;color:#ddd;font-size:15px;font-family:'DM Sans',sans-serif;outline:none;width:100%;-webkit-appearance:none;}
-.pp{padding:18px;overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;}
-.warn{font-size:12px;color:#d4a84b;padding:8px 10px;background:#141000;border:1px solid #3a2a00;border-radius:8px;margin-bottom:10px;}
-.ok-msg{font-size:12px;color:#6db87a;padding:8px 10px;background:#091409;border:1px solid #1a3a1a;border-radius:8px;margin-bottom:10px;}
-.scr{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;}
+.si{background:#0e0e0e;border:1px solid #1c1c1c;border-radius:8px;padding:7px 12px 7px 30px;color:#ddd;font-size:13px;font-family:'DM Sans',sans-serif;outline:none;width:100%;transition:border-color .18s;}
+.si:focus{border-color:#c9a96e33;}
+.lbar{background:#091409;border-bottom:1px solid #142014;padding:6px 20px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.pulse{animation:pls 2s infinite;}@keyframes pls{0%,100%{opacity:1;}50%{opacity:.4;}}
+.pp{padding:22px;flex:1;overflow-y:auto;}
+.cov-a{background:linear-gradient(135deg,#18082a,#2c1948,#7a3a5e);}
+.cov-b{background:linear-gradient(135deg,#180808,#621a0e,#b85a28);}
+.cov-c{background:linear-gradient(135deg,#081408,#1e4018,#5a8840);}
+.cov-d{background:linear-gradient(135deg,#08081a,#181848,#38287a);}
+.cov-e{background:linear-gradient(135deg,#141008,#3a2c08,#8a7028);}
+.warn{font-size:12px;color:#d4a84b;padding:8px 11px;background:#141000;border:1px solid #3a2a00;border-radius:8px;margin-bottom:12px;}
+.ok{font-size:12px;color:#6db87a;padding:8px 11px;background:#091409;border:1px solid #1a3a1a;border-radius:8px;margin-bottom:12px;}
+.spin{animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg);}}
+.loader{display:flex;align-items:center;justify-content:center;height:100%;}<br/>
+/* friend request card */
+.fr-req{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid #0e0e0e;background:#0c0b07;}
+.fr-req-actions{display:flex;gap:6px;margin-left:auto;}
 `;
 
-/* ══ ONBOARDING ══ */
-function Onboarding({onComplete}){
-  const [step,setStep]=useState(0);
-  const [f,setF]=useState({name:"",username:"",bio:"",location:""});
-  const [err,setErr]=useState("");
-  const next=()=>{
-    setErr("");
-    if(step===1&&!f.name.trim()){setErr("Please enter your name.");return;}
-    if(step===2&&!f.username.trim()){setErr("Please choose a username.");return;}
-    if(step===2&&/\s/.test(f.username)){setErr("No spaces in username.");return;}
-    if(step<3)setStep(s=>s+1);else onComplete({id:"me",...f,name:f.name.trim(),username:f.username.trim().toLowerCase(),status:"online"});
+/* ─────────────────────────────────────────────
+   SPINNER
+───────────────────────────────────────────── */
+const Spinner = () => (
+  <div className="loader">
+    <svg className="spin" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#c9a96e" strokeWidth="2" strokeLinecap="round">
+      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+    </svg>
+  </div>
+);
+
+/* ─────────────────────────────────────────────
+   AUTH SCREEN
+───────────────────────────────────────────── */
+function AuthScreen({ onAuth }) {
+  const [mode, setMode]       = useState("login"); // login | register | forgot
+  const [email, setEmail]     = useState("");
+  const [pass, setPass]       = useState("");
+  const [name, setName]       = useState("");
+  const [username, setUN]     = useState("");
+  const [bio, setBio]         = useState("");
+  const [location, setLoc]    = useState("");
+  const [showPw, setShowPw]   = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState("");
+  const [ok, setOk]           = useState("");
+
+  const submit = async () => {
+    setErr(""); setOk("");
+    if (!email.trim()) { setErr("Email is required."); return; }
+
+    if (mode === "forgot") {
+      setLoading(true);
+      try {
+        await auth.sendPasswordResetEmail(email.trim());
+        setOk("Reset email sent — check your inbox.");
+      } catch(e) { setErr(e.message); }
+      setLoading(false); return;
+    }
+
+    if (!pass) { setErr("Password is required."); return; }
+
+    setLoading(true);
+    try {
+      if (mode === "register") {
+        if (!name.trim())     { setErr("Please enter your name."); setLoading(false); return; }
+        if (!username.trim()) { setErr("Please choose a username."); setLoading(false); return; }
+        if (/\s/.test(username)) { setErr("No spaces in username."); setLoading(false); return; }
+
+        // Check username is unique
+        const un = username.trim().toLowerCase();
+        const snap = await db.collection("users").where("username","==",un).limit(1).get();
+        if (!snap.empty) { setErr("Username already taken."); setLoading(false); return; }
+
+        const cred = await auth.createUserWithEmailAndPassword(email.trim(), pass);
+        await cred.user.updateProfile({ displayName: name.trim() });
+        await db.collection("users").doc(cred.user.uid).set({
+          uid: cred.user.uid,
+          displayName: name.trim(),
+          username: un,
+          bio: bio.trim(),
+          location: location.trim(),
+          email: email.trim(),
+          online: true,
+          createdAt: nowTs(),
+        });
+      } else {
+        await auth.signInWithEmailAndPassword(email.trim(), pass);
+        // Update online status
+        const u = auth.currentUser;
+        if (u) await db.collection("users").doc(u.uid).update({ online: true });
+      }
+    } catch(e) {
+      const msgs = {
+        "auth/email-already-in-use": "Email already registered.",
+        "auth/wrong-password": "Incorrect password.",
+        "auth/user-not-found": "No account found with that email.",
+        "auth/weak-password": "Password must be at least 6 characters.",
+        "auth/invalid-email": "Invalid email address.",
+        "auth/invalid-credential": "Incorrect email or password.",
+      };
+      setErr(msgs[e.code] || e.message);
+    }
+    setLoading(false);
   };
-  return(
-    <div className="ob">
-      <div className="ob-bg"/><div className="ob-glow"/>
-      <div className="ob-card">
-        <div className="ob-logo">
-          <div className="ob-mark"><span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#c9a96e",lineHeight:1}}>✦</span></div>
-          <span className="ob-wm">Cercle</span>
+
+  return (
+    <div className="auth-wrap">
+      <div className="auth-bg"/><div className="auth-glow"/>
+      <div className="auth-card">
+        <div className="auth-logo">
+          <div className="auth-mark"><span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#c9a96e",lineHeight:1}}>✦</span></div>
+          <span className="auth-wm">Cercle</span>
         </div>
-        {step===0&&(
-          <div className="ob-step">
-            <h1 className="ob-h">Your private<br/><em>inner circle.</em></h1>
-            <p className="ob-sub">Share moments, plan evenings — only with people that matter.</p>
-            <div className="ob-feats">
-              {[{n:"chat",col:"#c9a96e",bg:"#221608",t:"Private messages & group chats"},{n:"cal",col:"#7a8fa6",bg:"#08111a",t:"Events with location & RSVP"},{n:"img",col:"#9e7a8c",bg:"#160a12",t:"Photos — friends only"},{n:"loc",col:"#6b8c6e",bg:"#0a1408",t:"Live location sharing"}].map(x=>(
-                <div key={x.t} className="ob-feat"><div className="ob-fi" style={{background:x.bg}}><I n={x.n} s={16} c={x.col}/></div><span className="ob-fl">{x.t}</span></div>
-              ))}
+
+        {mode==="login" && <>
+          <h1 className="auth-h">Welcome<br/><em>back.</em></h1>
+          <p className="auth-sub">Sign in to your circle.</p>
+        </>}
+        {mode==="register" && <>
+          <h1 className="auth-h">Join<br/><em>Cercle.</em></h1>
+          <p className="auth-sub">Create your private circle.</p>
+        </>}
+        {mode==="forgot" && <>
+          <h1 className="auth-h">Reset your<br/><em>password.</em></h1>
+          <p className="auth-sub">We'll send a link to your email.</p>
+        </>}
+
+        {err && <div className="auth-err">{err}</div>}
+        {ok  && <div className="auth-ok">{ok}</div>}
+
+        {mode==="register" && <>
+          <div className="auth-f"><label>Full name</label><input className="auth-in" placeholder="Sofia Laurent" value={name} onChange={e=>setName(e.target.value)} autoFocus/></div>
+          <div className="auth-f"><label>Username</label>
+            <div style={{position:"relative"}}>
+              <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#484848",fontSize:15}}>@</span>
+              <input className="auth-in" style={{paddingLeft:26}} placeholder="yourname" value={username} onChange={e=>setUN(e.target.value.replace(/\s/g,"").toLowerCase())}/>
             </div>
-            <button className="ob-btn" onClick={()=>setStep(1)}>Get started →</button>
           </div>
-        )}
-        {step===1&&(
-          <div className="ob-step" key="s1">
-            <div className="ob-dots">{[1,2,3].map(d=><div key={d} className={`ob-dot${d<=step?" on":""}`} style={{width:d===step?22:7}}/>)}</div>
-            <h1 className="ob-h">What's your<br/><em>name?</em></h1>
-            <p className="ob-sub">How should your friends see you?</p>
-            {err&&<div className="ob-err">{err}</div>}
-            <div className="ob-f"><label>Full name</label><input className="ob-in" placeholder="e.g. Sofia Laurent" value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&next()} autoFocus/></div>
-            <div className="ob-f"><label>Location <span style={{color:"#333",fontSize:10}}>— optional</span></label><input className="ob-in" placeholder="e.g. Paris, FR" value={f.location} onChange={e=>setF(x=>({...x,location:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&next()}/></div>
-            <button className="ob-btn" onClick={next} disabled={!f.name.trim()}>Continue →</button>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div className="auth-f"><label>Location <span style={{color:"#2a2a2a",fontSize:10}}>optional</span></label><input className="auth-in" placeholder="Paris, FR" value={location} onChange={e=>setLoc(e.target.value)}/></div>
+            <div className="auth-f"><label>Bio <span style={{color:"#2a2a2a",fontSize:10}}>optional</span></label><input className="auth-in" placeholder="A line about you" value={bio} onChange={e=>setBio(e.target.value)}/></div>
           </div>
-        )}
-        {step===2&&(
-          <div className="ob-step" key="s2">
-            <div className="ob-dots">{[1,2,3].map(d=><div key={d} className={`ob-dot${d<=step?" on":""}`} style={{width:d===step?22:7}}/>)}</div>
-            <h1 className="ob-h">Create your<br/><em>identity.</em></h1>
-            <p className="ob-sub">Friends find you by username.</p>
-            {err&&<div className="ob-err">{err}</div>}
-            <div className="ob-f"><label>Username</label>
-              <div style={{position:"relative"}}>
-                <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#484848",fontSize:15}}>@</span>
-                <input className="ob-in" style={{paddingLeft:26}} placeholder="yourname" value={f.username} onChange={e=>setF(x=>({...x,username:e.target.value.replace(/\s/g,"")}))} onKeyDown={e=>e.key==="Enter"&&next()} autoFocus/>
-              </div>
+          <div className="auth-divider"><span>account details</span></div>
+        </>}
+
+        <div className="auth-f"><label>Email</label><input className="auth-in" type="email" placeholder="you@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus={mode!=="register"}/></div>
+
+        {mode!=="forgot" && (
+          <div className="auth-f"><label>Password</label>
+            <div className="auth-pw">
+              <input className="auth-in" type={showPw?"text":"password"} placeholder="••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+              <button className="auth-pw-toggle" onClick={()=>setShowPw(p=>!p)}><I n={showPw?"eyeOff":"eye"} s={16}/></button>
             </div>
-            <div className="ob-f"><label>Bio <span style={{color:"#333",fontSize:10}}>— optional</span></label><input className="ob-in" placeholder="A line about yourself…" value={f.bio} onChange={e=>setF(x=>({...x,bio:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&next()}/></div>
-            <button className="ob-btn" onClick={next} disabled={!f.username.trim()}>Continue →</button>
           </div>
         )}
-        {step===3&&(
-          <div className="ob-step" key="s3">
-            <div className="ob-dots">{[1,2,3].map(d=><div key={d} className="ob-dot on" style={{width:d===3?22:7}}/>)}</div>
-            <div style={{display:"flex",justifyContent:"center",marginBottom:22}}>
-              <div style={{width:68,height:68,borderRadius:"50%",background:`linear-gradient(135deg,${cid("me")}cc,${cid("me")}44)`,border:`2px solid ${cid("me")}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontFamily:"'DM Sans',sans-serif",fontWeight:500,color:"#f5f0e8"}}>{ini(f.name)}</div>
-            </div>
-            <h1 className="ob-h" style={{textAlign:"center"}}>Welcome,<br/><em>{f.name.split(" ")[0]}.</em></h1>
-            <p className="ob-sub" style={{textAlign:"center",marginBottom:26}}>Your circle is ready. Start by adding friends.</p>
-            <button className="ob-btn" onClick={next}>Enter Cercle →</button>
+
+        <button className="auth-btn" onClick={submit} disabled={loading}>
+          {loading
+            ? <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/></svg>
+            : mode==="login" ? "Sign in" : mode==="register" ? "Create account" : "Send reset link"
+          }
+        </button>
+
+        {mode==="login" && (
+          <div className="auth-switch" style={{marginTop:12}}>
+            <button onClick={()=>{setMode("forgot");setErr("");setOk("");}}>Forgot password?</button>
           </div>
         )}
+        <div className="auth-switch">
+          {mode==="login"
+            ? <><span>No account? </span><button onClick={()=>{setMode("register");setErr("");setOk("");}}>Create one</button></>
+            : mode==="register"
+            ? <><span>Already have one? </span><button onClick={()=>{setMode("login");setErr("");setOk("");}}>Sign in</button></>
+            : <button onClick={()=>{setMode("login");setErr("");setOk("");}}>Back to sign in</button>
+          }
+        </div>
       </div>
     </div>
   );
 }
 
-/* ══ MAIN APP ══ */
-function App(){
-  /* Load all state from localStorage on mount */
-  const [me,setMe]    =useState(()=>LS.get("c_me"));
-  const [tab,setTab]  =useState("chat");
-  const [friends,setFr]=useState(()=>LS.get("c_fr",[]));
-  const [dms,setDms]  =useState(()=>LS.get("c_dms",{}));
-  const [groups,setGr]=useState(()=>LS.get("c_gr",[]));
-  const [events,setEv]=useState(()=>LS.get("c_ev",[]));
-  const [photos,setPh]=useState(()=>LS.get("c_ph",[]));
-  const [notifs,setNf]=useState(()=>LS.get("c_nf",[]));
-  const [liked,setLk] =useState(()=>LS.get("c_lk",[]));
-  /* UI state (not persisted) */
-  const [activeChat,setAC]=useState(null);
-  const [activeEv,setAE]  =useState(null);
-  const [viewUser,setVU]  =useState(null);
-  const [detOpen,setDO]   =useState(false);
-  const [modal,setMo]     =useState(null);
-  const [txt,setTxt]      =useState("");
-  const [sharingLoc,setSL]=useState(false);
-  const [fSearch,setFS]   =useState("");
-  const [addUn,setAU]     =useState("");
-  const [addRes,setAR]    =useState(null);
-  const [nEv,setNEv]      =useState({title:"",date:"",time:"",location:"",description:""});
-  const [nGn,setNGn]      =useState("");
-  const [nGm,setNGm]      =useState([]);
-  const [pCap,setPC]      =useState("");
-  const endRef=useRef(null);
+/* ─────────────────────────────────────────────
+   MAIN APP
+───────────────────────────────────────────── */
+function MainApp({ me }) {
+  const [tab, setTab]             = useState("chat");
+  const [friends, setFriends]     = useState([]);
+  const [requests, setRequests]   = useState([]); // incoming friend requests
+  const [activeChat, setActiveChat] = useState(null); // {type:"dm"|"group", id}
+  const [messages, setMessages]   = useState([]);
+  const [events, setEvents]       = useState([]);
+  const [activeEv, setActiveEv]   = useState(null);
+  const [photos, setPhotos]       = useState([]);
+  const [notifs, setNotifs]       = useState([]);
+  const [viewUser, setViewUser]   = useState(null);
+  const [modal, setModal]         = useState(null);
+  const [txt, setTxt]             = useState("");
+  const [sharingLoc, setSharingLoc] = useState(false);
+  const [fSearch, setFSearch]     = useState("");
+  const [searchQ, setSearchQ]     = useState("");
+  const [searchRes, setSearchRes] = useState(null); // found user
+  const [searchErr, setSearchErr] = useState("");
+  const [searchMsg, setSearchMsg] = useState("");
+  const [nEv, setNEv]             = useState({title:"",date:"",time:"",location:"",description:""});
+  const [pCap, setPCap]           = useState("");
+  const endRef = useRef(null);
 
-  /* Persist on every state change */
-  useEffect(()=>{if(me)LS.set("c_me",me);},[me]);
-  useEffect(()=>{LS.set("c_fr",friends);},[friends]);
-  useEffect(()=>{LS.set("c_dms",dms);},[dms]);
-  useEffect(()=>{LS.set("c_gr",groups);},[groups]);
-  useEffect(()=>{LS.set("c_ev",events);},[events]);
-  useEffect(()=>{LS.set("c_ph",photos);},[photos]);
-  useEffect(()=>{LS.set("c_nf",notifs);},[notifs]);
-  useEffect(()=>{LS.set("c_lk",liked);},[liked]);
-  useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"});},[dms,groups,activeChat]);
+  // ── Live listeners ──────────────────────────────────────
 
-  if(!me)return <><style>{CSS}</style><Onboarding onComplete={u=>{LS.set("c_me",u);setMe(u);}}/></>;
+  // Presence: mark online
+  useEffect(() => {
+    db.collection("users").doc(me.uid).update({ online: true });
+    return () => { db.collection("users").doc(me.uid).update({ online: false }); };
+  }, [me.uid]);
 
-  /* Derived */
-  const unread=notifs.filter(n=>n.unread).length;
-  const curMsgs=activeChat?(activeChat.type==="dm"?dms[activeChat.id]||[]:groups.find(g=>g.id===activeChat.id)?.messages||[]):[];
-  const curPeer=activeChat?(activeChat.type==="dm"?friends.find(f=>f.id===activeChat.id):groups.find(g=>g.id===activeChat.id)):null;
+  // Friends list
+  useEffect(() => {
+    const unsub = db.collection("users").doc(me.uid)
+      .collection("friends")
+      .onSnapshot(async snap => {
+        const uids = snap.docs.map(d => d.id);
+        if (!uids.length) { setFriends([]); return; }
+        // fetch profiles
+        const chunks = [];
+        for (let i=0; i<uids.length; i+=10) chunks.push(uids.slice(i,i+10));
+        const all = [];
+        for (const chunk of chunks) {
+          const s = await db.collection("users").where("uid","in",chunk).get();
+          s.docs.forEach(d => all.push(d.data()));
+        }
+        setFriends(all);
+      });
+    return unsub;
+  }, [me.uid]);
 
-  /* Open/close detail pane */
-  const openDetail=(type,id)=>{setAC({type,id});setDO(true);};
-  const openEvDetail=(ev)=>{setAE(ev);setDO(true);};
-  const closeDetail=()=>{setDO(false);setTimeout(()=>{setAC(null);setAE(null);},300);};
+  // Incoming friend requests
+  useEffect(() => {
+    const unsub = db.collection("users").doc(me.uid)
+      .collection("friendRequests")
+      .where("status","==","pending")
+      .onSnapshot(async snap => {
+        const reqs = await Promise.all(snap.docs.map(async d => {
+          const profile = await db.collection("users").doc(d.id).get();
+          return { ...d.data(), uid: d.id, ...profile.data() };
+        }));
+        setRequests(reqs);
+      });
+    return unsub;
+  }, [me.uid]);
 
-  /* Actions */
-  const send=()=>{
-    if(!txt.trim()||!activeChat)return;
-    const m={id:Date.now(),from:"me",text:txt.trim(),time:now()};
-    if(activeChat.type==="dm")setDms(d=>({...d,[activeChat.id]:[...(d[activeChat.id]||[]),m]}));
-    else setGr(gs=>gs.map(g=>g.id===activeChat.id?{...g,messages:[...g.messages,m]}:g));
+  // Messages for active chat
+  useEffect(() => {
+    if (!activeChat) { setMessages([]); return; }
+    const cid_ = activeChat.type==="dm" ? chatId(me.uid, activeChat.id) : activeChat.id;
+    const unsub = db.collection("chats").doc(cid_)
+      .collection("messages")
+      .orderBy("createdAt","asc")
+      .onSnapshot(snap => {
+        setMessages(snap.docs.map(d => ({id:d.id,...d.data()})));
+      });
+    return unsub;
+  }, [activeChat, me.uid]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages]);
+
+  // Events (events created by me or where I'm invited)
+  useEffect(() => {
+    const unsub = db.collection("events")
+      .where("memberUids","array-contains", me.uid)
+      .orderBy("createdAt","desc")
+      .onSnapshot(snap => {
+        setEvents(snap.docs.map(d => ({id:d.id,...d.data()})));
+      });
+    return unsub;
+  }, [me.uid]);
+
+  // Photos (from friends + me)
+  useEffect(() => {
+    if (!friends.length) {
+      // just my own photos
+      const unsub = db.collection("photos")
+        .where("ownerUid","==",me.uid)
+        .orderBy("createdAt","desc")
+        .onSnapshot(snap => setPhotos(snap.docs.map(d=>({id:d.id,...d.data()}))));
+      return unsub;
+    }
+    const uids = [me.uid, ...friends.map(f=>f.uid)];
+    const unsub = db.collection("photos")
+      .where("ownerUid","in", uids.slice(0,10))
+      .orderBy("createdAt","desc")
+      .onSnapshot(snap => setPhotos(snap.docs.map(d=>({id:d.id,...d.data()}))));
+    return unsub;
+  }, [me.uid, friends.length]);
+
+  // Notifications
+  useEffect(() => {
+    const unsub = db.collection("users").doc(me.uid)
+      .collection("notifications")
+      .orderBy("createdAt","desc")
+      .limit(30)
+      .onSnapshot(snap => setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))));
+    return unsub;
+  }, [me.uid]);
+
+  // ── Actions ─────────────────────────────────────────────
+
+  const sendMessage = async () => {
+    if (!txt.trim() || !activeChat) return;
+    const cid_ = activeChat.type==="dm" ? chatId(me.uid, activeChat.id) : activeChat.id;
+    const text = txt.trim();
     setTxt("");
+    await db.collection("chats").doc(cid_).collection("messages").add({
+      from: me.uid,
+      fromName: me.displayName,
+      text,
+      createdAt: nowTs(),
+    });
+    // update last message on chat doc
+    await db.collection("chats").doc(cid_).set({
+      lastMessage: text,
+      lastAt: nowTs(),
+      members: activeChat.type==="dm" ? [me.uid, activeChat.id] : [],
+    }, {merge:true});
   };
-  const addFriend=()=>{
-    if(!addUn.trim())return;
-    const u=addUn.trim().toLowerCase();
-    if(u===me.username){setAR("self");return;}
-    if(friends.find(f=>f.username===u)){setAR("already");return;}
-    const name=NAMES[Math.floor(Math.random()*NAMES.length)];
-    const nf={id:"u_"+u,name,username:u,bio:"",location:"",status:"offline"};
-    setFr(f=>[...f,nf]);
-    setNf(n=>[{id:Date.now(),from:nf,text:`You added ${name} to your circle.`,time:"Just now",unread:false},...n]);
-    setAR("added");setAU("");
+
+  const searchUser = async () => {
+    setSearchErr(""); setSearchRes(null); setSearchMsg("");
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return;
+    if (q === (me.username||"").toLowerCase()) { setSearchErr("That's your own username."); return; }
+    const snap = await db.collection("users").where("username","==",q).limit(1).get();
+    if (snap.empty) { setSearchErr("No user found with that username."); return; }
+    const user = snap.docs[0].data();
+    if (friends.find(f=>f.uid===user.uid)) { setSearchErr("Already in your circle."); return; }
+    setSearchRes(user);
   };
-  const createEvent=()=>{
-    if(!nEv.title.trim())return;
-    const ev={id:"ev"+Date.now(),...nEv,title:nEv.title.trim(),creator:me,attendees:[me],invited:[...friends],cover:COVERS[Math.floor(Math.random()*COVERS.length)],rsvp:"going"};
-    setEv(e=>[ev,...e]);
+
+  const sendFriendRequest = async (toUser) => {
+    // write request to their subcollection
+    await db.collection("users").doc(toUser.uid)
+      .collection("friendRequests")
+      .doc(me.uid)
+      .set({ from: me.uid, fromName: me.displayName, status: "pending", createdAt: nowTs() });
+    // notify them
+    await db.collection("users").doc(toUser.uid)
+      .collection("notifications")
+      .add({ type:"friendRequest", from:me.uid, fromName:me.displayName, text:`${me.displayName} sent you a friend request.`, unread:true, createdAt:nowTs() });
+    setSearchMsg(`Friend request sent to @${toUser.username}!`);
+    setSearchRes(null);
+  };
+
+  const acceptRequest = async (req) => {
+    const batch = db.batch();
+    // add each to the other's friends subcollection
+    batch.set(db.collection("users").doc(me.uid).collection("friends").doc(req.uid), { since: nowTs() });
+    batch.set(db.collection("users").doc(req.uid).collection("friends").doc(me.uid), { since: nowTs() });
+    // mark request done
+    batch.update(db.collection("users").doc(me.uid).collection("friendRequests").doc(req.uid), { status:"accepted" });
+    await batch.commit();
+    // notify sender
+    await db.collection("users").doc(req.uid).collection("notifications").add({
+      type:"friendAccepted", from:me.uid, fromName:me.displayName,
+      text:`${me.displayName} accepted your friend request.`, unread:true, createdAt:nowTs()
+    });
+  };
+
+  const declineRequest = async (req) => {
+    await db.collection("users").doc(me.uid).collection("friendRequests").doc(req.uid).update({ status:"declined" });
+  };
+
+  const createEvent = async () => {
+    if (!nEv.title.trim()) return;
+    const memberUids = [me.uid, ...friends.map(f=>f.uid)];
+    await db.collection("events").add({
+      title: nEv.title.trim(),
+      date: nEv.date, time: nEv.time,
+      location: nEv.location, description: nEv.description,
+      creatorUid: me.uid, creatorName: me.displayName,
+      memberUids,
+      attendees: [{ uid: me.uid, name: me.displayName }],
+      invited: friends.map(f=>({ uid:f.uid, name:f.displayName })),
+      cover: COVERS[Math.floor(Math.random()*COVERS.length)],
+      rsvps: { [me.uid]: "going" },
+      createdAt: nowTs(),
+    });
     setNEv({title:"",date:"",time:"",location:"",description:""});
-    setMo(null);setTab("events");
-    setTimeout(()=>openEvDetail(ev),50);
-  };
-  const createGroup=()=>{
-    if(!nGn.trim()||nGm.length===0)return;
-    const g={id:"g"+Date.now(),name:nGn.trim(),members:[me,...nGm],messages:[],avatar:nGn.trim().slice(0,2).toUpperCase()};
-    setGr(gs=>[...gs,g]);setNGn("");setNGm([]);setMo(null);
-    setTab("chat");setTimeout(()=>openDetail("group",g.id),50);
-  };
-  const sharePhoto=()=>{
-    const cols=["#c9a96e","#9e7a8c","#7a8fa6","#6b8c6e","#a67c52","#8c8c7a"];
-    const ph={id:"ph"+Date.now(),owner:me,caption:pCap.trim()||"A moment.",likes:[],time:"Just now",color:cols[Math.floor(Math.random()*cols.length)]};
-    setPh(p=>[ph,...p]);setPC("");setMo(null);
-  };
-  const signOut=()=>{
-    ["c_me","c_fr","c_dms","c_gr","c_ev","c_ph","c_nf","c_lk"].forEach(k=>LS.del(k));
-    setMe(null);setFr([]);setDms({});setGr([]);setEv([]);setPh([]);setNf([]);setLk([]);
+    setModal(null); setTab("events");
   };
 
-  const GAv=({g,size=38})=>(
-    <div style={{width:size,height:size,borderRadius:"50%",background:"linear-gradient(135deg,#221422,#362436)",border:"1.5px solid #302030",display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.3,fontWeight:600,color:"#c9a96e",flexShrink:0}}>{g.avatar}</div>
-  );
+  const rsvpEvent = async (evId, rsvp) => {
+    await db.collection("events").doc(evId).update({ [`rsvps.${me.uid}`]: rsvp });
+  };
 
-  const navs=[
-    {id:"chat",n:"chat",lbl:"Chats"},
-    {id:"friends",n:"users",lbl:"Friends"},
-    {id:"events",n:"cal",lbl:"Events"},
-    {id:"photos",n:"img",lbl:"Moments"},
-    {id:"notifications",n:"bell",lbl:"Alerts",badge:unread>0},
-    {id:"profile",n:"user",lbl:"Me"},
+  const sharePhoto = async () => {
+    const cols = ["#c9a96e","#9e7a8c","#7a8fa6","#6b8c6e","#a67c52","#8c8c7a"];
+    await db.collection("photos").add({
+      ownerUid: me.uid, ownerName: me.displayName,
+      caption: pCap.trim()||"A moment.",
+      likes: [], color: cols[Math.floor(Math.random()*cols.length)],
+      createdAt: nowTs(),
+    });
+    setPCap(""); setModal(null);
+  };
+
+  const toggleLike = async (photo) => {
+    const likes = photo.likes || [];
+    const already = likes.includes(me.uid);
+    await db.collection("photos").doc(photo.id).update({
+      likes: already
+        ? firebase.firestore.FieldValue.arrayRemove(me.uid)
+        : firebase.firestore.FieldValue.arrayUnion(me.uid)
+    });
+  };
+
+  const markNotifRead = async (nid) => {
+    await db.collection("users").doc(me.uid).collection("notifications").doc(nid).update({ unread:false });
+  };
+
+  const signOut = async () => {
+    await db.collection("users").doc(me.uid).update({ online: false });
+    await auth.signOut();
+  };
+
+  // ── Derived ─────────────────────────────────────────────
+  const unread = notifs.filter(n=>n.unread).length + requests.length;
+  const myProfile = { ...me, username: me._username };
+
+  const navs = [
+    { id:"chat",          n:"chat",     badge: false },
+    { id:"friends",       n:"users",    badge: requests.length > 0 },
+    { id:"events",        n:"calendar", badge: false },
+    { id:"photos",        n:"image",    badge: false },
+    { id:"notifications", n:"bell",     badge: unread > 0 },
   ];
 
-  /* ── CHAT DETAIL PANE ── */
-  const ChatDetail=()=>(
-    <div className={`detail-pane${detOpen?" open":""}`}>
-      {curPeer?(
-        <>
-          <div className="dphead">
-            <div style={{display:"flex",alignItems:"center",gap:9}}>
-              <button className="nb" style={{color:"#888",marginLeft:-4}} onClick={closeDetail}><I n="back" s={20}/></button>
-              {activeChat?.type==="dm"?<Av user={curPeer} size={34} dot/>:<GAv g={curPeer} size={34}/>}
-              <div>
-                <div style={{fontSize:14,fontWeight:500,color:"#eee8dd"}}>{curPeer.name}</div>
-                <div style={{fontSize:11,color:"#3a3a3a"}}>{activeChat?.type==="group"?`${curPeer.members?.length} members`:`@${curPeer.username}`}</div>
-              </div>
+  // ── CHAT ────────────────────────────────────────────────
+  const Chat = () => {
+    const peer = activeChat?.type==="dm" ? friends.find(f=>f.uid===activeChat.id) : null;
+    return (
+      <>
+        <div className="panel">
+          <div className="ph">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:11}}>
+              <span className="pt">Messages</span>
             </div>
-            <button className="btn ghost" style={{fontSize:11,padding:"4px 10px"}} onClick={()=>setSL(s=>!s)}>
-              <I n="loc" s={11}/> {sharingLoc?"Stop":"Live loc"}
-            </button>
+            {friends.length>0 && <div className="sw"><I n="search" s={13} c="#3a3a3a"/><input className="si" placeholder="Search…"/></div>}
           </div>
-          {sharingLoc&&(
-            <div className="lbar">
-              <div className="pulse" style={{width:7,height:7,borderRadius:"50%",background:"#6db87a"}}/>
-              <span style={{fontSize:12,color:"#6db87a"}}>Sharing live location{me.location?` · ${me.location}`:""}</span>
-              <button onClick={()=>setSL(false)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#484848"}}>Stop</button>
-            </div>
-          )}
-          <div className="ca">
-            {curMsgs.length===0&&<div className="empty"><I n="chat" s={28} c="#1e1e1e"/><p>No messages yet.</p></div>}
-            {curMsgs.map((m,i)=>(
-              <div key={m.id||i} className={`msg${m.from==="me"?" me":""} fade`}>
-                {m.from!=="me"&&<Av user={activeChat?.type==="dm"?curPeer:(groups.find(g=>g.id===activeChat?.id)?.members?.find(x=>x.id===m.from)||me)} size={28}/>}
-                <div>
-                  {activeChat?.type==="group"&&m.from!=="me"&&<div style={{fontSize:10,color:"#c9a96e",marginBottom:2}}>{groups.find(g=>g.id===activeChat?.id)?.members?.find(x=>x.id===m.from)?.name||"Member"}</div>}
-                  <div className="bbl">{m.text}</div>
-                  <div className="mt">{m.time}</div>
+          <div className="pl">
+            {friends.length===0 && (
+              <div className="empty" style={{padding:28}}>
+                <I n="chat" s={30} c="#1e1e1e"/>
+                <p>Add friends to start chatting.</p>
+                <button className="btn gold" style={{marginTop:8}} onClick={()=>setTab("friends")}>Find friends</button>
+              </div>
+            )}
+            {friends.map(u => {
+              const cid_ = chatId(me.uid, u.uid);
+              const lastMsg = null; // could cache last messages per chat
+              return (
+                <div key={u.uid} className={`pi${activeChat?.type==="dm"&&activeChat.id===u.uid?" on":""}`} onClick={()=>setActiveChat({type:"dm",id:u.uid})}>
+                  <Av user={u} size={38} dot/>
+                  <div style={{flex:1,overflow:"hidden"}}>
+                    <div style={{fontSize:13,fontWeight:500,color:"#ddd8cc"}}>{u.displayName}</div>
+                    <div style={{fontSize:12,color:"#484848"}}>@{u.username}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="main">
+          {activeChat && peer ? (
+            <>
+              <div className="mh">
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <Av user={peer} size={36} dot/>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:500,color:"#eee8dd"}}>{peer.displayName}</div>
+                    <div style={{fontSize:11,color:"#3a3a3a"}}>@{peer.username} · {peer.online?"online":"offline"}</div>
+                  </div>
+                </div>
+                <button className="btn ghost" style={{fontSize:12,padding:"4px 11px"}} onClick={()=>setSharingLoc(s=>!s)}>
+                  <I n="location" s={12}/> {sharingLoc?"Stop":"Share location"}
+                </button>
+              </div>
+              {sharingLoc && (
+                <div className="lbar">
+                  <div className="pulse" style={{width:7,height:7,borderRadius:"50%",background:"#6db87a"}}/>
+                  <span style={{fontSize:12,color:"#6db87a"}}>Sharing live location</span>
+                  <button onClick={()=>setSharingLoc(false)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#484848"}}>Stop</button>
+                </div>
+              )}
+              <div className="ca">
+                {messages.length===0 && <div className="empty"><I n="chat" s={30} c="#1e1e1e"/><p>No messages yet. Say hi!</p></div>}
+                {messages.map(m => (
+                  <div key={m.id} className={`msg${m.from===me.uid?" me":""} fade`}>
+                    {m.from!==me.uid && <Av user={peer} size={28}/>}
+                    <div>
+                      <div className="bbl">{m.text}</div>
+                      <div className="mt">{m.createdAt ? fmtTime(m.createdAt) : ""}</div>
+                    </div>
+                  </div>
+                ))}
+                <div ref={endRef}/>
+              </div>
+              <div className="ia">
+                <div className="ir">
+                  <textarea className="ci" placeholder="Write a message…" rows={1} value={txt} onChange={e=>setTxt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}/>
+                  <button className="sb" onClick={sendMessage}><I n="send" s={12} c="#0a0a0a"/></button>
                 </div>
               </div>
-            ))}
-            <div ref={endRef}/>
+            </>
+          ) : (
+            <div className="empty">
+              <I n="chat" s={40} c="#181818"/>
+              <p>{friends.length===0 ? "Add friends to start chatting." : "Select a conversation."}</p>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  // ── FRIENDS ─────────────────────────────────────────────
+  const Friends = () => (
+    <>
+      <div className="panel">
+        <div className="ph">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:11}}>
+            <span className="pt">Friends</span>
+            <button className="btn gold" style={{padding:"4px 12px",fontSize:12}} onClick={()=>{setSearchQ("");setSearchRes(null);setSearchErr("");setSearchMsg("");setModal("add-friend");}}>+ Add</button>
           </div>
-          <div className="ia">
-            <div className="ir">
-              <button style={{background:"none",border:"none",color:"#383838",cursor:"pointer",display:"flex",padding:"2px"}} onClick={()=>setMo("photo")}><I n="photo" s={18}/></button>
-              <textarea className="ci" placeholder="Write a message…" rows={1} value={txt} onChange={e=>setTxt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
-              <button className="sb" onClick={send}><I n="send" s={13} c="#0a0a0a"/></button>
+          {friends.length>0 && <div className="sw"><I n="search" s={13} c="#3a3a3a"/><input className="si" placeholder="Search…" value={fSearch} onChange={e=>setFSearch(e.target.value)}/></div>}
+        </div>
+        <div className="pl">
+          {/* Pending requests */}
+          {requests.map(req => (
+            <div key={req.uid} className="fr-req">
+              <Av user={req} size={38}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,color:"#ddd"}}>{req.fromName}</div>
+                <div style={{fontSize:11,color:"#c9a96e"}}>friend request</div>
+              </div>
+              <div className="fr-req-actions">
+                <button className="btn gold" style={{padding:"4px 10px",fontSize:11}} onClick={()=>acceptRequest(req)}>Accept</button>
+                <button className="btn ghost" style={{padding:"4px 8px",fontSize:11}} onClick={()=>declineRequest(req)}>✕</button>
+              </div>
+            </div>
+          ))}
+          {friends.length===0 && requests.length===0 ? (
+            <div className="empty" style={{padding:28}}>
+              <I n="users" s={30} c="#1e1e1e"/>
+              <p>No friends yet. Add someone by their username.</p>
+              <button className="btn gold" style={{marginTop:8}} onClick={()=>setModal("add-friend")}>Add friend</button>
+            </div>
+          ) : friends.filter(u=>!fSearch||u.displayName.toLowerCase().includes(fSearch.toLowerCase())||u.username.includes(fSearch.toLowerCase())).map(u=>(
+            <div key={u.uid} className="pi" onClick={()=>{setViewUser(u);setTab("profile");}}>
+              <Av user={u} size={40} dot/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:500,color:"#ddd8cc"}}>{u.displayName}</div>
+                <div style={{fontSize:12,color:"#484848"}}>@{u.username}{u.location?` · ${u.location}`:""}</div>
+              </div>
+              <button className="btn ghost" style={{fontSize:11,padding:"3px 9px"}} onClick={e=>{e.stopPropagation();setActiveChat({type:"dm",id:u.uid});setTab("chat");}}>Message</button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="main" style={{alignItems:"center",justifyContent:"center"}}>
+        <div className="empty">
+          <I n="users" s={40} c="#181818"/>
+          <p style={{maxWidth:240}}>{friends.length===0 ? "Your circle is empty. Add friends by username to get started." : `${friends.length} friend${friends.length!==1?"s":""}. Select one to view their profile.`}</p>
+          {friends.length===0 && <button className="btn gold" style={{marginTop:10}} onClick={()=>setModal("add-friend")}>+ Add a friend</button>}
+        </div>
+      </div>
+    </>
+  );
+
+  // ── EVENTS ──────────────────────────────────────────────
+  const Events = () => (
+    <>
+      <div className="panel">
+        <div className="ph">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span className="pt">Events</span>
+            <button className="btn gold" style={{padding:"4px 12px",fontSize:12}} onClick={()=>setModal("new-event")}>+ Create</button>
+          </div>
+        </div>
+        <div className="pl" style={{padding:"10px 12px"}}>
+          {events.length===0 && <div className="empty" style={{padding:28}}><I n="calendar" s={30} c="#1e1e1e"/><p>No events yet.</p></div>}
+          {events.map(ev => {
+            const myRsvp = ev.rsvps?.[me.uid] || "invited";
+            return (
+              <div key={ev.id} className={`evc${activeEv?.id===ev.id?" sel":""}`} onClick={()=>setActiveEv(ev)}>
+                <div className={`ecv ${ev.cover}`}/>
+                <div className="ecb">
+                  <div style={{fontSize:13,fontWeight:500,color:"#eee8dd",marginBottom:2}}>{ev.title}</div>
+                  <div style={{fontSize:11,color:"#555"}}>{ev.date||"Date TBD"}{ev.time?` · ${ev.time}`:""}</div>
+                  {ev.location&&<div style={{fontSize:11,color:"#484848",display:"flex",gap:3,marginTop:2,alignItems:"center"}}><I n="pin" s={10}/>{ev.location}</div>}
+                  <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:11,color:"#484848"}}>{(ev.attendees||[]).length} going</div>
+                    <span className={`tag t${myRsvp[0]}`}>{myRsvp}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="main">
+        {activeEv ? (
+          <div style={{flex:1,overflow:"auto"}}>
+            <div className={`ecv ${activeEv.cover}`} style={{height:170,position:"relative"}}>
+              <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 30%,#090909)"}}/>
+              <div style={{position:"absolute",bottom:16,left:22}}>
+                <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:300,color:"#f5f0e8"}}>{activeEv.title}</h1>
+              </div>
+            </div>
+            <div style={{padding:"20px 24px"}}>
+              <div style={{display:"flex",gap:7,marginBottom:18,flexWrap:"wrap"}}>
+                {["going","maybe","can't go"].map(r=>(
+                  <button key={r} className={`btn${(activeEv.rsvps?.[me.uid]||"invited")===r?" gold":" ghost"}`} style={{padding:"4px 12px",fontSize:12}} onClick={()=>rsvpEvent(activeEv.id,r)}>
+                    {r.charAt(0).toUpperCase()+r.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+                {[["Date & Time",activeEv.date?`${activeEv.date}${activeEv.time?" · "+activeEv.time:""}` :"TBD"],["Location",activeEv.location||"TBD"],["Hosted by",activeEv.creatorName],["Attending",`${(activeEv.attendees||[]).length} going`]].map(([l,v])=>(
+                  <div key={l} style={{background:"#0c0c0c",border:"1px solid #181818",borderRadius:9,padding:"10px 12px"}}>
+                    <div style={{fontSize:10,color:"#484848",letterSpacing:".06em",textTransform:"uppercase",marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:13,color:"#ccc"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {activeEv.description&&<p style={{fontSize:13,color:"#999",lineHeight:1.7,marginBottom:18}}>{activeEv.description}</p>}
+              {activeEv.location&&(
+                <div style={{background:"#091409",border:"1px solid #141e14",borderRadius:9,padding:"11px 13px",display:"flex",gap:9,alignItems:"center"}}>
+                  <I n="map" s={16} c="#6db87a"/>
+                  <div><div style={{fontSize:13,color:"#ccc"}}>{activeEv.location}</div><div style={{fontSize:11,color:"#484848"}}>Open in maps</div></div>
+                </div>
+              )}
             </div>
           </div>
-        </>
-      ):(
-        <><div className="dphead"><button className="nb" style={{color:"#888"}} onClick={closeDetail}><I n="back" s={20}/></button></div><div className="empty"><I n="chat" s={34} c="#181818"/><p>Select a conversation.</p></div></>
+        ) : (
+          <div className="empty">
+            <I n="calendar" s={40} c="#181818"/>
+            <p>{events.length===0 ? "Create your first event." : "Select an event."}</p>
+            {events.length===0 && <button className="btn gold" style={{marginTop:10}} onClick={()=>setModal("new-event")}>+ Create event</button>}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  // ── PHOTOS ──────────────────────────────────────────────
+  const Photos = () => (
+    <div className="main" style={{padding:24,overflow:"auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:20}}>
+        <div>
+          <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:300,color:"#f0ebe0"}}>Moments</h2>
+          <p style={{color:"#484848",fontSize:12,marginTop:2}}>Friends-only.</p>
+        </div>
+        <button className="btn gold" style={{fontSize:12}} onClick={()=>setModal("photo")}>+ Share</button>
+      </div>
+      {photos.length===0 ? (
+        <div className="empty" style={{height:"auto",paddingTop:50}}>
+          <I n="image" s={40} c="#181818"/>
+          <p>No photos yet. Share a moment with your circle.</p>
+          <button className="btn gold" style={{marginTop:10}} onClick={()=>setModal("photo")}>Share a photo</button>
+        </div>
+      ) : (
+        <div className="pgrid">
+          {photos.map(ph => {
+            const isLiked = (ph.likes||[]).includes(me.uid);
+            return (
+              <div key={ph.id} className="pc">
+                <div style={{position:"absolute",inset:0,background:`linear-gradient(135deg,${ph.color}44,${ph.color}18)`}}/>
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><I n="image" s={34} c={ph.color+"88"}/></div>
+                <div className="pov">
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    <Av user={{uid:ph.ownerUid,displayName:ph.ownerName}} size={20}/>
+                    <span style={{fontSize:12,color:"#ddd"}}>{ph.ownerName}</span>
+                    <span style={{fontSize:10,color:"#666",marginLeft:"auto"}}>{ph.createdAt?fmtTime(ph.createdAt):""}</span>
+                  </div>
+                  <div style={{fontSize:12,color:"#bbb",marginBottom:6}}>{ph.caption}</div>
+                  <button onClick={()=>toggleLike(ph)} style={{background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,color:isLiked?"#c9703a":"#888",fontSize:12}}>
+                    <I n={isLiked?"heartF":"heart"} s={13} c={isLiked?"#c9703a":"#888"}/>{(ph.likes||[]).length}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 
-  /* ── EVENT DETAIL PANE ── */
-  const EvDetail=()=>(
-    <div className={`detail-pane${detOpen?" open":""}`} style={{overflow:"hidden"}}>
-      {activeEv?(
-        <div style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch"}}>
-          <div className={`ecv-h ca-${activeEv.cover[activeEv.cover.length-1]}`} style={{height:170,position:"relative",flexShrink:0}}>
-            <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 25%,#090909)"}}/>
-            <button className="nb" style={{position:"absolute",top:16,left:10,background:"rgba(0,0,0,.5)",color:"#ddd"}} onClick={closeDetail}><I n="back" s={20}/></button>
-            <div style={{position:"absolute",bottom:14,left:16}}>
-              <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:300,color:"#f5f0e8",lineHeight:1.2}}>{activeEv.title}</h1>
+  // ── NOTIFICATIONS ────────────────────────────────────────
+  const Notifs = () => (
+    <div className="main" style={{overflow:"auto"}}>
+      <div style={{padding:"16px 20px",borderBottom:"1px solid #141414",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:21,fontWeight:400,color:"#f0ebe0"}}>Notifications</h2>
+        {unread>0 && <button className="btn ghost" style={{fontSize:11}} onClick={()=>notifs.filter(n=>n.unread).forEach(n=>markNotifRead(n.id))}>Mark all read</button>}
+      </div>
+      {notifs.length===0
+        ? <div className="empty"><I n="bell" s={40} c="#181818"/><p>Nothing here yet.</p></div>
+        : notifs.map(n=>(
+          <div key={n.id} className={`nf${n.unread?" ur":""}`} onClick={()=>markNotifRead(n.id)}>
+            <Av user={{uid:n.from,displayName:n.fromName||"?"}} size={38}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,color:"#ccc",lineHeight:1.5}}>{n.text}</div>
+              <div style={{fontSize:11,color:"#383838",marginTop:2}}>{n.createdAt?fmtTime(n.createdAt):""}</div>
             </div>
+            {n.unread && <div className="ndot"/>}
           </div>
-          <div style={{padding:"16px 16px 32px"}}>
-            <div style={{display:"flex",gap:7,marginBottom:14,flexWrap:"wrap"}}>
-              {["going","maybe","can't go"].map(r=>(
-                <button key={r} className={`btn${activeEv.rsvp===r?" gold":" ghost"}`} style={{padding:"5px 12px",fontSize:12}} onClick={()=>setEv(es=>es.map(e=>e.id===activeEv.id?{...e,rsvp:r}:e))}>
-                  {r.charAt(0).toUpperCase()+r.slice(1)}
-                </button>
-              ))}
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-              {[["Date",activeEv.date?`${activeEv.date}${activeEv.time?" · "+activeEv.time:""}` :"TBD"],["Location",activeEv.location||"TBD"],["Host",activeEv.creator?.name],["Guests",`${activeEv.attendees.length} going`]].map(([l,v])=>(
-                <div key={l} style={{background:"#0c0c0c",border:"1px solid #181818",borderRadius:9,padding:"9px 10px"}}>
-                  <div style={{fontSize:9,color:"#484848",letterSpacing:".06em",textTransform:"uppercase",marginBottom:2}}>{l}</div>
-                  <div style={{fontSize:12,color:"#ccc"}}>{v}</div>
-                </div>
-              ))}
-            </div>
-            {activeEv.description&&<p style={{fontSize:13,color:"#999",lineHeight:1.7,marginBottom:14}}>{activeEv.description}</p>}
-            <div style={{fontSize:9,color:"#484848",letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Who's coming</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-              {activeEv.attendees.map(u=>(
-                <div key={u.id} style={{display:"flex",alignItems:"center",gap:5,background:"#0c0c0c",borderRadius:20,padding:"4px 9px 4px 4px",border:"1px solid #1a1a1a"}}>
-                  <Av user={u} size={20}/><span style={{fontSize:12,color:"#ccc"}}>{u.name}</span><span style={{fontSize:9,color:"#6db87a"}}>✓</span>
-                </div>
-              ))}
-              {activeEv.invited.map(u=>(
-                <div key={u.id} style={{display:"flex",alignItems:"center",gap:5,background:"#0a0a0a",borderRadius:20,padding:"4px 9px 4px 4px",border:"1px dashed #1e1e1e"}}>
-                  <Av user={u} size={20}/><span style={{fontSize:12,color:"#484848"}}>{u.name}</span>
-                </div>
-              ))}
-            </div>
-            {activeEv.location&&(
-              <div style={{background:"#091409",border:"1px solid #141e14",borderRadius:9,padding:"10px 12px",display:"flex",gap:8,alignItems:"center"}}>
-                <I n="map" s={15} c="#6db87a"/>
-                <div><div style={{fontSize:13,color:"#ccc"}}>{activeEv.location}</div><div style={{fontSize:11,color:"#484848"}}>Open in maps</div></div>
+        ))
+      }
+    </div>
+  );
+
+  // ── PROFILE ──────────────────────────────────────────────
+  const pu = tab==="profile" && viewUser ? viewUser : { ...me, username: me._username };
+  const isMe = pu.uid === me.uid;
+  const Profile = () => (
+    <div className="main">
+      <div className="pp">
+        <div style={{display:"flex",gap:20,alignItems:"flex-start",marginBottom:26}}>
+          <Av user={pu} size={76} dot/>
+          <div style={{flex:1}}>
+            <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:300,color:"#f0ebe0"}}>{pu.displayName||pu.name}</h1>
+            <div style={{fontSize:13,color:"#555",marginBottom:4}}>@{pu.username}</div>
+            {pu.bio && <p style={{fontSize:13,color:"#888",lineHeight:1.6,marginBottom:5}}>{pu.bio}</p>}
+            {pu.location && <div style={{fontSize:12,color:"#484848",display:"flex",gap:4,alignItems:"center"}}><I n="pin" s={12}/>{pu.location}</div>}
+            {!isMe && (
+              <div style={{display:"flex",gap:7,marginTop:12}}>
+                <button className="btn gold" onClick={()=>{setActiveChat({type:"dm",id:pu.uid});setTab("chat");}}>Message</button>
+                {friends.find(f=>f.uid===pu.uid)
+                  ? <button className="btn ghost">Friends ✓</button>
+                  : <button className="btn gold" onClick={()=>sendFriendRequest(pu)}>+ Add</button>
+                }
               </div>
             )}
           </div>
         </div>
-      ):(
-        <><div className="dphead"><button className="nb" style={{color:"#888"}} onClick={closeDetail}><I n="back" s={20}/></button></div><div className="empty"><I n="cal" s={34} c="#181818"/><p>Select an event.</p></div></>
-      )}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:9,marginBottom:22}}>
+          {[["Friends",friends.length],["Events",events.filter(e=>e.memberUids?.includes(pu.uid)).length],["Photos",photos.filter(p=>p.ownerUid===pu.uid).length]].map(([l,v])=>(
+            <div key={l} className="st">
+              <div style={{fontSize:20,fontFamily:"'Cormorant Garamond',serif",color:"#c9a96e"}}>{v}</div>
+              <div style={{fontSize:11,color:"#484848",marginTop:1}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        {isMe && (
+          <button className="btn ghost" style={{fontSize:12,display:"flex",alignItems:"center",gap:5}} onClick={signOut}>
+            <I n="logout" s={13}/> Sign out
+          </button>
+        )}
+      </div>
     </div>
   );
 
-  /* ── MODALS ── */
-  const Modal=()=>{
-    if(!modal)return null;
-    return(
-      <div className="ov" onClick={e=>e.target===e.currentTarget&&setMo(null)}>
-        {modal==="add-friend"&&(
+  // ── MODALS ───────────────────────────────────────────────
+  const Modal = () => {
+    if (!modal) return null;
+    return (
+      <div className="ov" onClick={e=>e.target===e.currentTarget&&setModal(null)}>
+        {modal==="add-friend" && (
           <div className="modal fade">
-            <div className="mpill"/>
             <div className="mhdr">
-              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#f0ebe0"}}>Add a Friend</span>
-              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setMo(null)}><I n="x" s={18}/></button>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:"#f0ebe0"}}>Add a Friend</span>
+              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setModal(null)}><I n="x" s={18}/></button>
             </div>
             <div className="mbody">
-              <p style={{fontSize:13,color:"#555",marginBottom:13,lineHeight:1.6}}>Enter a username to add them to your circle.</p>
-              <div className="field"><label>Username</label>
+              <p style={{fontSize:13,color:"#555",marginBottom:16,lineHeight:1.6}}>Search by username to find real users.</p>
+              <div className="field">
+                <label>Username</label>
                 <div style={{display:"flex",gap:8}}>
                   <div style={{position:"relative",flex:1}}>
-                    <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#444",fontSize:15}}>@</span>
-                    <input style={{paddingLeft:24}} placeholder="username" value={addUn} onChange={e=>{setAU(e.target.value.replace(/\s/g,""));setAR(null);}} onKeyDown={e=>e.key==="Enter"&&addFriend()} autoFocus/>
+                    <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#444",fontSize:14}}>@</span>
+                    <input style={{paddingLeft:24}} placeholder="username" value={searchQ} onChange={e=>{setSearchQ(e.target.value.replace(/\s/g,"").toLowerCase());setSearchRes(null);setSearchErr("");setSearchMsg("");}} onKeyDown={e=>e.key==="Enter"&&searchUser()} autoFocus/>
                   </div>
-                  <button className="btn gold" style={{fontSize:13,padding:"8px 16px"}} onClick={addFriend}>Add</button>
+                  <button className="btn gold" onClick={searchUser}>Search</button>
                 </div>
               </div>
-              {addRes==="self"&&<div className="warn">That's your own username.</div>}
-              {addRes==="already"&&<div className="warn">Already in your circle.</div>}
-              {addRes==="added"&&<div className="ok-msg">Friend added! ✓</div>}
-              <p style={{fontSize:11,color:"#2a2a2a",marginTop:8}}>Any username creates a contact in this demo.</p>
+              {searchErr && <div className="warn">{searchErr}</div>}
+              {searchMsg && <div className="ok">{searchMsg}</div>}
+              {searchRes && (
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px",background:"#0e0e0e",borderRadius:11,border:"1px solid #1e1e1e",marginTop:4}}>
+                  <Av user={searchRes} size={44}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,color:"#ddd8cc",fontWeight:500}}>{searchRes.displayName}</div>
+                    <div style={{fontSize:12,color:"#555"}}>@{searchRes.username}{searchRes.location?` · ${searchRes.location}`:""}</div>
+                    {searchRes.bio && <div style={{fontSize:12,color:"#484848",marginTop:2}}>{searchRes.bio}</div>}
+                  </div>
+                  <button className="btn gold" onClick={()=>sendFriendRequest(searchRes)}>+ Add</button>
+                </div>
+              )}
             </div>
           </div>
         )}
-        {modal==="new-event"&&(
+
+        {modal==="new-event" && (
           <div className="modal fade">
-            <div className="mpill"/>
             <div className="mhdr">
-              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#f0ebe0"}}>Create Event</span>
-              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setMo(null)}><I n="x" s={18}/></button>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:"#f0ebe0"}}>Create Event</span>
+              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setModal(null)}><I n="x" s={18}/></button>
             </div>
             <div className="mbody">
               <div className="field"><label>Name *</label><input placeholder="e.g. Rooftop Aperitivo" value={nEv.title} onChange={e=>setNEv(n=>({...n,title:e.target.value}))} autoFocus/></div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
                 <div className="field"><label>Date</label><input type="date" value={nEv.date} onChange={e=>setNEv(n=>({...n,date:e.target.value}))}/></div>
                 <div className="field"><label>Time</label><input type="time" value={nEv.time} onChange={e=>setNEv(n=>({...n,time:e.target.value}))}/></div>
               </div>
-              <div className="field"><label>Location</label>
+              <div className="field">
+                <label>Location</label>
                 <div style={{position:"relative"}}>
-                  <div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)"}}><I n="pin" s={12} c="#c9a96e"/></div>
-                  <input style={{paddingLeft:26}} placeholder="Address or place name" value={nEv.location} onChange={e=>setNEv(n=>({...n,location:e.target.value}))}/>
+                  <div style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)"}}><I n="pin" s={12} c="#c9a96e"/></div>
+                  <input style={{paddingLeft:28}} placeholder="Address or place name" value={nEv.location} onChange={e=>setNEv(n=>({...n,location:e.target.value}))}/>
                 </div>
               </div>
               <div className="field"><label>Description</label><textarea placeholder="What's the plan?" value={nEv.description} onChange={e=>setNEv(n=>({...n,description:e.target.value}))}/></div>
-              {friends.length===0&&<div className="warn">Add friends first so you can invite them.</div>}
-              <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 10px",background:"#091409",border:"1px solid #142014",borderRadius:8,marginBottom:12}}>
-                <I n="users" s={12} c="#6db87a"/><span style={{fontSize:12,color:"#6db87a"}}>Only friends will be invited</span>
-              </div>
-              <button className="btn gold" style={{width:"100%",padding:13,fontSize:14}} onClick={createEvent} disabled={!nEv.title.trim()}>Create Event</button>
+              {friends.length===0 && <div className="warn" style={{marginBottom:12}}>Add friends first so you can invite them.</div>}
+              <button className="btn gold" style={{width:"100%",padding:11}} onClick={createEvent} disabled={!nEv.title.trim()}>Create Event</button>
             </div>
           </div>
         )}
-        {modal==="new-group"&&(
+
+        {modal==="photo" && (
           <div className="modal fade">
-            <div className="mpill"/>
             <div className="mhdr">
-              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#f0ebe0"}}>New Group</span>
-              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setMo(null)}><I n="x" s={18}/></button>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:"#f0ebe0"}}>Share a Moment</span>
+              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setModal(null)}><I n="x" s={18}/></button>
             </div>
             <div className="mbody">
-              <div className="field"><label>Group name *</label><input placeholder="e.g. Friday Crew" value={nGn} onChange={e=>setNGn(e.target.value)} autoFocus/></div>
-              <div style={{fontSize:10,color:"#484848",letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>Select members</div>
-              {friends.length===0&&<p style={{fontSize:13,color:"#555"}}>Add some friends first.</p>}
-              {friends.map(u=>{
-                const sel=nGm.find(m=>m.id===u.id);
-                return(
-                  <div key={u.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #141414",cursor:"pointer",minHeight:52}} onClick={()=>setNGm(m=>sel?m.filter(x=>x.id!==u.id):[...m,u])}>
-                    <Av user={u} size={36}/><div style={{flex:1}}><div style={{fontSize:14,color:"#ddd"}}>{u.name}</div><div style={{fontSize:11,color:"#484848"}}>@{u.username}</div></div>
-                    <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid${sel?" #c9a96e":" #2a2a2a"}`,background:sel?"#c9a96e":"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      {sel&&<I n="ok" s={11} c="#0a0a0a"/>}
-                    </div>
-                  </div>
-                );
-              })}
-              <button className="btn gold" style={{width:"100%",padding:13,marginTop:14,fontSize:14}} onClick={createGroup} disabled={!nGn.trim()||nGm.length===0}>Create Group</button>
-            </div>
-          </div>
-        )}
-        {modal==="photo"&&(
-          <div className="modal fade">
-            <div className="mpill"/>
-            <div className="mhdr">
-              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#f0ebe0"}}>Share a Moment</span>
-              <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setMo(null)}><I n="x" s={18}/></button>
-            </div>
-            <div className="mbody">
-              {friends.length===0&&<div className="warn">Add friends so they can see your photos.</div>}
-              <div style={{border:"2px dashed #1c1c1c",borderRadius:12,padding:"34px 20px",textAlign:"center",marginBottom:12,cursor:"pointer"}}>
-                <I n="img" s={30} c="#2a2a2a"/>
-                <p style={{color:"#484848",fontSize:13,marginTop:8}}>Select a photo</p>
+              <div style={{border:"2px dashed #1c1c1c",borderRadius:11,padding:"38px 20px",textAlign:"center",marginBottom:14,cursor:"pointer"}}>
+                <I n="image" s={34} c="#2a2a2a"/>
+                <p style={{color:"#484848",fontSize:13,marginTop:8}}>Select a photo to share</p>
                 <p style={{color:"#2a2a2a",fontSize:11,marginTop:3}}>Visible to friends only</p>
               </div>
-              <div className="field"><label>Caption</label><input placeholder="Write something…" value={pCap} onChange={e=>setPC(e.target.value)} autoFocus/></div>
-              <button className="btn gold" style={{width:"100%",padding:13,fontSize:14}} onClick={sharePhoto}>Share</button>
+              <div className="field"><label>Caption</label><input placeholder="Write something…" value={pCap} onChange={e=>setPCap(e.target.value)} autoFocus/></div>
+              <button className="btn gold" style={{width:"100%",padding:11}} onClick={sharePhoto}>Share</button>
             </div>
           </div>
         )}
@@ -644,246 +1061,89 @@ function App(){
     );
   };
 
-  /* ── TAB CONTENT ── */
-  const pu=tab==="profile"&&viewUser?viewUser:me;
-
-  const content=(()=>{
-    switch(tab){
-      case "chat": return(
-        <>
-          <div className="mob-hdr">
-            <h2>Messages</h2>
-            {friends.length>0&&<button className="btn ghost" style={{fontSize:12,padding:"5px 12px"}} onClick={()=>setMo("new-group")}>+ Group</button>}
-          </div>
-          <div className="list-pane">
-            <div className="lph">
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-                <span className="lpt">Messages</span>
-                {friends.length>0&&<button className="btn ghost" style={{fontSize:11,padding:"3px 10px"}} onClick={()=>setMo("new-group")}>+ Group</button>}
-              </div>
-              {(friends.length>0||groups.length>0)&&<div className="sw"><I n="search" s={13} c="#3a3a3a"/><input className="si" placeholder="Search…" style={{fontSize:14}}/></div>}
-            </div>
-            <div className="lpl">
-              {friends.length===0&&groups.length===0&&(
-                <div className="empty"><I n="chat" s={28} c="#1e1e1e"/><p>Add friends to start chatting.</p><button className="btn gold" style={{marginTop:8,fontSize:13}} onClick={()=>setTab("friends")}>Add friends</button></div>
-              )}
-              {friends.map(u=>{
-                const msgs=dms[u.id]||[];const last=msgs[msgs.length-1];
-                return(
-                  <div key={u.id} className={`lpi${activeChat?.type==="dm"&&activeChat.id===u.id?" on":""}`} onClick={()=>openDetail("dm",u.id)}>
-                    <Av user={u} size={40} dot/>
-                    <div style={{flex:1,overflow:"hidden"}}>
-                      <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:14,fontWeight:500,color:"#ddd8cc"}}>{u.name}</span>{last&&<span style={{fontSize:11,color:"#2e2e2e"}}>{last.time}</span>}</div>
-                      <div style={{fontSize:12,color:"#484848",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{last?(last.from==="me"?"You: ":"")+last.text:`Say hi to ${u.name.split(" ")[0]}`}</div>
-                    </div>
-                  </div>
-                );
-              })}
-              {groups.length>0&&<div style={{padding:"6px 14px 2px",fontSize:10,color:"#363636",letterSpacing:".07em",textTransform:"uppercase"}}>Groups</div>}
-              {groups.map(g=>{
-                const last=g.messages[g.messages.length-1];
-                return(
-                  <div key={g.id} className={`lpi${activeChat?.type==="group"&&activeChat.id===g.id?" on":""}`} onClick={()=>openDetail("group",g.id)}>
-                    <div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,#221422,#362436)",border:"1.5px solid #302030",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,color:"#c9a96e",flexShrink:0}}>{g.avatar}</div>
-                    <div style={{flex:1,overflow:"hidden"}}><div style={{fontSize:14,fontWeight:500,color:"#ddd8cc"}}>{g.name}</div><div style={{fontSize:12,color:"#484848",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{last?last.text:"Start the conversation"}</div></div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <ChatDetail/>
-        </>
-      );
-      case "friends": return(
-        <>
-          <div className="mob-hdr"><h2>Friends</h2><button className="btn gold" style={{fontSize:12,padding:"5px 14px"}} onClick={()=>{setAR(null);setMo("add-friend");}}>+ Add</button></div>
-          <div className="list-pane">
-            <div className="lph">
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}><span className="lpt">Friends</span><button className="btn gold" style={{fontSize:11,padding:"4px 12px"}} onClick={()=>{setAR(null);setMo("add-friend");}}>+ Add</button></div>
-              {friends.length>0&&<div className="sw"><I n="search" s={13} c="#3a3a3a"/><input className="si" placeholder="Search…" value={fSearch} onChange={e=>setFS(e.target.value)} style={{fontSize:14}}/></div>}
-            </div>
-            <div className="lpl">
-              {friends.length===0?(
-                <div className="empty"><I n="users" s={28} c="#1e1e1e"/><p>No friends yet.</p><button className="btn gold" style={{marginTop:8,fontSize:13}} onClick={()=>{setAR(null);setMo("add-friend");}}>Add friend</button></div>
-              ):friends.filter(u=>!fSearch||u.name.toLowerCase().includes(fSearch.toLowerCase())||u.username.includes(fSearch.toLowerCase())).map(u=>(
-                <div key={u.id} className="lpi" onClick={()=>{setVU(u);setTab("profile");}}>
-                  <Av user={u} size={42} dot/>
-                  <div style={{flex:1}}><div style={{fontSize:14,fontWeight:500,color:"#ddd8cc"}}>{u.name}</div><div style={{fontSize:12,color:"#484848"}}>@{u.username}{u.location?` · ${u.location}`:""}</div></div>
-                  <button className="btn ghost" style={{fontSize:11,padding:"4px 10px"}} onClick={e=>{e.stopPropagation();openDetail("dm",u.id);setTab("chat");}}>Msg</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      );
-      case "events": return(
-        <>
-          <div className="mob-hdr"><h2>Events</h2><button className="btn gold" style={{fontSize:12,padding:"5px 14px"}} onClick={()=>setMo("new-event")}>+ Create</button></div>
-          <div className="list-pane">
-            <div className="lph">
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span className="lpt">Events</span><button className="btn gold" style={{fontSize:11,padding:"4px 12px"}} onClick={()=>setMo("new-event")}>+ Create</button></div>
-            </div>
-            <div className="lpl" style={{padding:"10px 11px"}}>
-              {events.length===0&&<div className="empty"><I n="cal" s={28} c="#1e1e1e"/><p>No events yet.</p></div>}
-              {events.map(ev=>(
-                <div key={ev.id} className={`evc${activeEv?.id===ev.id?" sel":""}`} onClick={()=>openEvDetail(ev)}>
-                  <div className={`ecv-h ca-${ev.cover[ev.cover.length-1]}`}/>
-                  <div className="ecb">
-                    <div style={{fontSize:13,fontWeight:500,color:"#eee8dd",marginBottom:2}}>{ev.title}</div>
-                    <div style={{fontSize:11,color:"#555"}}>{ev.date||"Date TBD"}{ev.time?` · ${ev.time}`:""}</div>
-                    {ev.location&&<div style={{fontSize:11,color:"#484848",display:"flex",gap:3,marginTop:2,alignItems:"center"}}><I n="pin" s={10}/>{ev.location}</div>}
-                    <div style={{marginTop:7,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <div style={{display:"flex"}}>{ev.attendees.slice(0,3).map((u,i)=><div key={u.id} style={{marginLeft:i>0?-7:0}}><Av user={u} size={18}/></div>)}</div>
-                      <span className={`tag t${ev.rsvp[0]}`}>{ev.rsvp}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <EvDetail/>
-        </>
-      );
-      case "photos": return(
-        <>
-          <div className="mob-hdr"><h2>Moments</h2><button className="btn gold" style={{fontSize:12,padding:"5px 14px"}} onClick={()=>setMo("photo")}>+ Share</button></div>
-          <div className="scr" style={{padding:"13px 13px 24px"}}>
-            {photos.length===0?(
-              <div className="empty" style={{paddingTop:60}}><I n="img" s={34} c="#181818"/><p>No photos yet.</p><button className="btn gold" style={{marginTop:10,fontSize:13}} onClick={()=>setMo("photo")}>Share a photo</button></div>
-            ):(
-              <div className="pgrid">
-                {photos.map(ph=>{
-                  const isL=liked.includes(ph.id);
-                  return(
-                    <div key={ph.id} className="pc">
-                      <div style={{position:"absolute",inset:0,background:`linear-gradient(135deg,${ph.color}44,${ph.color}18)`}}/>
-                      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><I n="img" s={30} c={ph.color+"88"}/></div>
-                      <div className="pov">
-                        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}><Av user={ph.owner} size={18}/><span style={{fontSize:11,color:"#ddd"}}>{ph.owner.name}</span><span style={{fontSize:9,color:"#666",marginLeft:"auto"}}>{ph.time}</span></div>
-                        <div style={{fontSize:11,color:"#bbb",marginBottom:5}}>{ph.caption}</div>
-                        <button onClick={()=>setLk(l=>l.includes(ph.id)?l.filter(x=>x!==ph.id):[...l,ph.id])} style={{background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,color:isL?"#c9703a":"#888",fontSize:12}}>
-                          <I n={isL?"hf":"heart"} s={13} c={isL?"#c9703a":"#888"}/>{ph.likes.length+(isL?1:0)}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </>
-      );
-      case "notifications": return(
-        <>
-          <div className="mob-hdr"><h2>Notifications</h2>{unread>0&&<button className="btn ghost" style={{fontSize:11,padding:"4px 11px"}} onClick={()=>setNf(ns=>ns.map(n=>({...n,unread:false})))}>All read</button>}</div>
-          <div className="scr">
-            {notifs.length===0?<div className="empty"><I n="bell" s={34} c="#181818"/><p>Nothing here yet.</p></div>:notifs.map(n=>(
-              <div key={n.id} className={`nf${n.unread?" ur":""}`} onClick={()=>setNf(ns=>ns.map(x=>x.id===n.id?{...x,unread:false}:x))}>
-                {n.from&&<Av user={n.from} size={38}/>}
-                <div style={{flex:1}}><div style={{fontSize:13,color:"#ccc",lineHeight:1.5}}>{n.text}</div><div style={{fontSize:11,color:"#383838",marginTop:2}}>{n.time}</div></div>
-                {n.unread&&<div className="ndot"/>}
-              </div>
-            ))}
-          </div>
-        </>
-      );
-      case "profile": return(
-        <>
-          <div className="mob-hdr">
-            {viewUser?<button className="nb" style={{color:"#888",marginLeft:-4}} onClick={()=>{setVU(null);setTab("chat");}}><I n="back" s={20}/></button>:<h2>Profile</h2>}
-            {viewUser&&<span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"#f0ebe0"}}>{viewUser.name.split(" ")[0]}</span>}
-            <div style={{width:30}}/>
-          </div>
-          <div className="scr">
-            <div className="pp">
-              <div style={{display:"flex",gap:16,alignItems:"flex-start",marginBottom:22}}>
-                <Av user={pu} size={70} dot/>
-                <div style={{flex:1}}>
-                  <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:23,fontWeight:300,color:"#f0ebe0",lineHeight:1.2}}>{pu.name}</h1>
-                  <div style={{fontSize:12,color:"#555",marginBottom:4}}>@{pu.username}</div>
-                  {pu.bio&&<p style={{fontSize:13,color:"#888",lineHeight:1.6,marginBottom:4}}>{pu.bio}</p>}
-                  {pu.location&&<div style={{fontSize:12,color:"#484848",display:"flex",gap:3,alignItems:"center"}}><I n="pin" s={11}/>{pu.location}</div>}
-                  {pu.id!=="me"?(
-                    <div style={{display:"flex",gap:7,marginTop:11}}>
-                      <button className="btn gold" style={{fontSize:13}} onClick={()=>{openDetail("dm",pu.id);setTab("chat");}}>Message</button>
-                      {friends.find(f=>f.id===pu.id)?<button className="btn ghost" style={{fontSize:13}}>Friends ✓</button>:<button className="btn ghost" style={{fontSize:13}} onClick={()=>setFr(f=>[...f,pu])}>+ Add</button>}
-                    </div>
-                  ):(
-                    <button className="btn ghost" style={{marginTop:10,fontSize:12,display:"flex",alignItems:"center",gap:4}}><I n="edit" s={12}/>Edit profile</button>
-                  )}
-                </div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:20}}>
-                {[["Friends",friends.length],["Events",events.filter(e=>e.creator?.id===pu.id||e.attendees?.find(a=>a.id===pu.id)).length],["Photos",photos.filter(p=>p.owner.id===pu.id).length]].map(([l,v])=>(
-                  <div key={l} className="st"><div style={{fontSize:20,fontFamily:"'Cormorant Garamond',serif",color:"#c9a96e"}}>{v}</div><div style={{fontSize:10,color:"#484848",marginTop:1}}>{l}</div></div>
-                ))}
-              </div>
-              {photos.filter(p=>p.owner.id===pu.id).length>0&&(
-                <>
-                  <div style={{fontSize:9,color:"#484848",letterSpacing:".07em",textTransform:"uppercase",marginBottom:9}}>Photos</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:20}}>
-                    {photos.filter(p=>p.owner.id===pu.id).map(ph=>(
-                      <div key={ph.id} style={{aspectRatio:"1",borderRadius:9,background:`linear-gradient(135deg,${ph.color}44,${ph.color}18)`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-                        <I n="img" s={20} c={ph.color+"88"}/>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-              {pu.id==="me"&&<button className="btn ghost" style={{fontSize:12,display:"flex",alignItems:"center",gap:5}} onClick={signOut}><I n="out" s={13}/>Sign out</button>}
-            </div>
-          </div>
-        </>
-      );
-      default: return null;
-    }
-  })();
-
-  return(
+  // ── RENDER ───────────────────────────────────────────────
+  return (
     <>
       <style>{CSS}</style>
       <div className="app">
-        {/* Desktop sidebar */}
         <div className="sidebar">
-          <div style={{marginBottom:11,cursor:"pointer"}} onClick={()=>{setVU(null);setTab("profile");}}>
+          <div style={{marginBottom:12,cursor:"pointer"}} onClick={()=>{setViewUser(null);setTab("profile");}}>
             <div style={{width:38,height:38,borderRadius:10,background:"linear-gradient(135deg,#c9a96e14,#c9a96e38)",border:"1px solid #c9a96e2a",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"#c9a96e",lineHeight:1}}>✦</span>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,color:"#c9a96e",lineHeight:1}}>✦</span>
             </div>
           </div>
           <div style={{height:1,background:"#141414",width:32,marginBottom:4}}/>
           {navs.map(item=>(
-            <button key={item.id} className={`nb${tab===item.id?" on":""}`} onClick={()=>{if(item.id==="profile")setVU(null);setTab(item.id);}}>
+            <button key={item.id} className={`nb${tab===item.id?" on":""}`} onClick={()=>setTab(item.id)}>
               <I n={item.n} s={18}/>
-              {item.badge&&<div className="bdg"/>}
+              {item.badge && <div className="bdg"/>}
             </button>
           ))}
           <div style={{flex:1}}/>
-          <button className="nb" onClick={()=>{setVU(null);setTab("profile");}}><Av user={me} size={28} dot/></button>
+          <button className="nb" onClick={()=>{setViewUser(null);setTab("profile");}} title="Profile">
+            <Av user={me} size={28}/>
+          </button>
         </div>
 
-        {/* Main content */}
-        <div className="content" style={{flexDirection:"column"}}>
-          {content}
-        </div>
-
-        {/* Mobile bottom nav */}
-        <div className="botnav">
-          {navs.map(item=>(
-            <button key={item.id} className={`bni${tab===item.id?" on":""}`} onClick={()=>{if(item.id==="profile")setVU(null);setTab(item.id);}}>
-              <I n={item.n} s={22}/>
-              {item.badge&&<div className="bdg"/>}
-              <span className="bni-lbl">{item.lbl}</span>
-            </button>
-          ))}
-        </div>
-
+        {tab==="chat"          && <Chat/>}
+        {tab==="friends"       && <Friends/>}
+        {tab==="events"        && <Events/>}
+        {tab==="photos"        && <Photos/>}
+        {tab==="notifications" && <Notifs/>}
+        {tab==="profile"       && <Profile/>}
         <Modal/>
       </div>
     </>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+/* ─────────────────────────────────────────────
+   ROOT — auth gate
+───────────────────────────────────────────── */
+function Root() {
+  const [user, setUser]       = useState(undefined); // undefined = loading
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged(async fbUser => {
+      if (fbUser) {
+        // fetch Firestore profile
+        const doc = await db.collection("users").doc(fbUser.uid).get();
+        if (doc.exists) {
+          setProfile({ ...doc.data(), _username: doc.data().username });
+        } else {
+          // profile not created yet (edge case)
+          setProfile({ uid: fbUser.uid, displayName: fbUser.displayName||"User", _username:"" });
+        }
+        setUser(fbUser);
+      } else {
+        setUser(null);
+        setProfile(null);
+      }
+    });
+    return unsub;
+  }, []);
+
+  if (user === undefined) {
+    return (
+      <>
+        <style>{CSS}</style>
+        <div style={{height:"100dvh",background:"#060606",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,color:"#c9a96e",marginBottom:20}}>✦ Cercle</div>
+            <Spinner/>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!user) return <><style>{CSS}</style><AuthScreen/></>;
+
+  return <MainApp me={profile}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
 </script>
 </body>
 </html>
