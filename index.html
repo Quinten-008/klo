@@ -26,7 +26,7 @@
 <body>
 <div id="root"></div>
 
-<script>
+<script type="text/babel">
 /* ============================================================
    🔥 FIREBASE CONFIG — replace with your own project values
    Get these from: Firebase Console → Project Settings → Your apps
@@ -44,9 +44,7 @@ const firebaseConfig = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db   = firebase.firestore();
-</script>
 
-<script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ─────────────────────────────────────────────
