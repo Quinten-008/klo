@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="theme-color" content="#080808"/>
   <title>Cercle</title>
@@ -529,8 +530,8 @@ function MainApp({me}){
     await db.collection("users").doc(toUser.uid).collection("friendRequests").doc(me.uid)
       .set({from:me.uid,fromName:me.displayName,status:"pending",createdAt:nowTs()});
     await db.collection("users").doc(toUser.uid).collection("notifications")
-      .add({type:"friendRequest",from:me.uid,fromName:me.displayName,text:`${me.displayName} sent you a friend request.`,unread:true,createdAt:nowTs()});
-    setSearchMsg(`Friend request sent to @${toUser.username}!`);setSearchRes(null);
+      .add({type:"friendRequest",from:me.uid,fromName:me.displayName,text:me.displayName+" sent you a friend request.",unread:true,createdAt:nowTs()});
+    setSearchMsg("Friend request sent to @"+toUser.username+"!");setSearchRes(null);
   };
 
   const acceptRequest=async(req)=>{
@@ -539,7 +540,7 @@ function MainApp({me}){
     batch.set(db.collection("users").doc(req.uid).collection("friends").doc(me.uid),{since:nowTs()});
     batch.update(db.collection("users").doc(me.uid).collection("friendRequests").doc(req.uid),{status:"accepted"});
     await batch.commit();
-    await db.collection("users").doc(req.uid).collection("notifications").add({type:"friendAccepted",from:me.uid,fromName:me.displayName,text:`${me.displayName} accepted your friend request.`,unread:true,createdAt:nowTs()});
+    await db.collection("users").doc(req.uid).collection("notifications").add({type:"friendAccepted",from:me.uid,fromName:me.displayName,text:me.displayName+" accepted your friend request.",unread:true,createdAt:nowTs()});
   };
 
   const declineRequest=async(req)=>{
@@ -559,7 +560,7 @@ function MainApp({me}){
   };
 
   const rsvpEvent=async(evId,rsvp)=>{
-    await db.collection("events").doc(evId).update({[`rsvps.${me.uid}`]:rsvp});
+    await db.collection("events").doc(evId).update({["rsvps."+me.uid]:rsvp});
   };
 
   const sharePhoto=async()=>{
