@@ -1,219 +1,79 @@
-# ✦ Cercle — Firebase Setup Guide
+# ✦ Cercle
 
-This version connects to a real Firebase backend. Real accounts, real friend requests, real messages shared between users.
+A private social app for your inner circle — built as a single-file React web app with Firebase on the backend.
 
----
+## Overview
 
-## Step 1 — Create a Firebase project
+Cercle is a mobile-first social platform designed for close friends. Instead of broadcasting to the world, everything stays within your personal circle: private messaging, shared events, photo moments, and friend-only notifications.
 
-1. Go to [console.firebase.google.com](https://console.firebase.google.com)
-2. Click **Add project** → give it a name (e.g. `cercle`)
-3. Disable Google Analytics if you don't need it → **Create project**
+## Features
 
----
+- **Authentication** — Email/password sign-up and login with Firebase Auth. Includes password reset flow and username uniqueness checks.
+- **Friends** — Send and accept friend requests by searching usernames. See who's online.
+- **Messaging** — Real-time 1-on-1 chat with friends, powered by Firestore.
+- **Events** — Create events with a title, date, time, location, and description. Friends are automatically invited and can RSVP. Events display a colour-coded cover and a full guest list with attendance status.
+- **Moments (Photos)** — Share photos with captions to your circle. Photos are stored as base64 in Firestore and displayed in a grid.
+- **Notifications** — In-app notification feed for friend requests, event invites, RSVPs, and new messages, with an unread badge on the nav.
+- **Profile** — Edit your display name, username, bio, and location. Sign out from the profile screen.
 
-## Step 2 — Enable Authentication
+## Tech Stack
 
-1. In the Firebase console sidebar: **Build → Authentication**
-2. Click **Get started**
-3. Under **Sign-in method**, enable **Email/Password**
-4. Save
-
----
-
-## Step 3 — Create a Firestore database
-
-1. In the sidebar: **Build → Firestore Database**
-2. Click **Create database**
-3. Choose **Start in test mode** (you'll secure it later)
-4. Pick a region close to you → **Enable**
-
----
-
-## Step 4 — Get your config keys
-
-1. Click the **gear icon** next to "Project Overview" → **Project settings**
-2. Scroll down to **Your apps** → click the **</>** (web) icon
-3. Register the app (any nickname) — you don't need Firebase Hosting
-4. Copy the `firebaseConfig` object that appears. It looks like:
-
-```js
-const firebaseConfig = {
-  apiKey: "AIza...",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123:web:abc123"
-};
-```
-
----
-
-## Step 5 — Paste the config into index.html
-
-Open `index.html` and find this block near the top (around line 20):
-
-```js
-const FIREBASE_CONFIG = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID"
-};
-```
-
-Replace each `"YOUR_..."` value with the real values from Step 4.
-
----
-
-## Step 6 — Add Firestore security rules
-
-In the Firebase console → **Firestore Database → Rules**, paste:
-
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    // Users: anyone can read profiles (needed for username search before login)
-    // Only the owner can write their own document
-    match /users/{uid} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == uid;
-
-      // Friend requests: only the recipient can read/update
-      match /friendRequests/{fromUid} {
-        allow read, write: if request.auth.uid == uid || request.auth.uid == fromUid;
-      }
-
-      // Friends list
-      match /friends/{friendUid} {
-        allow read: if request.auth.uid == uid;
-        allow write: if request.auth != null;
-      }
-
-      // Notifications
-      match /notifications/{nid} {
-        allow read, write: if request.auth.uid == uid;
-        allow create: if request.auth != null;
-      }
-    }
-
-    // Chats: only members can read/write
-    match /chats/{chatId} {
-      allow read, write: if request.auth != null &&
-        (resource == null || request.auth.uid in resource.data.members ||
-         chatId.matches('.*' + request.auth.uid + '.*'));
-
-      match /messages/{msgId} {
-        allow read, write: if request.auth != null;
-      }
-    }
-
-    // Events: members only
-    match /events/{evId} {
-      allow read: if request.auth != null &&
-        request.auth.uid in resource.data.memberUids;
-      allow create: if request.auth != null;
-      allow update: if request.auth.uid in resource.data.memberUids;
-    }
-
-    // Photos: authenticated users
-    match /photos/{phId} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}
-```
-
-Click **Publish**.
-
----
-
-## Step 7 — Add Firestore indexes
-
-Some queries need composite indexes. Firebase will show you an error link in the browser console the first time a query runs — just click the link and it creates the index automatically. The queries that need indexes are:
-
-- `events` — `memberUids` array-contains + `createdAt` desc
-- `photos` — `ownerUid` in + `createdAt` desc
-- `notifications` — `createdAt` desc
-
----
-
-## Step 8 — Deploy to GitHub Pages
-
-Upload `index.html` to your GitHub repo (same steps as before):
-
-1. Go to your repo → **Add file → Upload files**
-2. Upload `index.html`
-3. **Settings → Pages → Deploy from branch → main → / (root)**
-
-Your app is live at `https://your-username.github.io/your-repo/`
-
----
-
-## How it works
-
-| Feature | How |
+| Layer | Technology |
 |---|---|
-| Accounts | Firebase Authentication (email + password) |
-| Profiles | Firestore `users/{uid}` document |
-| Friend requests | `users/{uid}/friendRequests/{fromUid}` subcollection |
-| Messages | `chats/{chatId}/messages` — real-time with `onSnapshot` |
-| Events | `events` collection — shared with all invited members |
-| Photos | `photos` collection — visible to all authenticated users |
-| Notifications | `users/{uid}/notifications` subcollection |
-| Online status | `users/{uid}.online` boolean, updated on sign in/out |
+| UI | React 18 (via CDN, no build step) |
+| Styling | Plain CSS with CSS custom properties |
+| Backend | Firebase (Auth + Firestore) |
+| Fonts | Cormorant Garamond + DM Sans (Google Fonts) |
 
----
+## Getting Started
 
-## Firestore data structure
+This is a **zero-build** app — no npm, no bundler, no compile step required.
 
-```
-users/
-  {uid}/
-    uid, displayName, username, bio, location, email, online, createdAt
-    friends/
-      {friendUid}/  { since }
-    friendRequests/
-      {fromUid}/    { from, fromName, status, createdAt }
-    notifications/
-      {id}/         { type, from, fromName, text, unread, createdAt }
+1. **Clone or download** `index.html`
+2. **Set up a Firebase project** at [firebase.google.com](https://firebase.google.com)
+   - Enable **Authentication** (Email/Password provider)
+   - Enable **Firestore Database**
+3. **Add your Firebase config** — find the `firebaseConfig` object near the top of the `<script>` tag and replace the placeholder values with your own project credentials:
+   ```js
+   const firebaseConfig = {
+     apiKey: "YOUR_API_KEY",
+     authDomain: "YOUR_PROJECT.firebaseapp.com",
+     projectId: "YOUR_PROJECT_ID",
+     ...
+   };
+   ```
+4. **Open `index.html`** in a browser, or deploy it to any static host (GitHub Pages, Netlify, Vercel, etc.)
 
-chats/
-  {uid1_uid2}/
-    members: [uid1, uid2]
-    lastMessage, lastAt
-    messages/
-      {id}/  { from, fromName, text, createdAt }
+## Firestore Collections
 
-events/
-  {id}/
-    title, date, time, location, description
-    creatorUid, creatorName
-    memberUids: [uid, ...]
-    attendees: [{uid, name}]
-    rsvps: { uid: "going"|"maybe"|"can't go" }
-    cover, createdAt
-
-photos/
-  {id}/
-    ownerUid, ownerName, caption, color, likes: [uid], createdAt
-```
-
----
-
-## Free tier limits (Firebase Spark plan)
-
-| Resource | Free limit |
+| Collection | Purpose |
 |---|---|
-| Firestore reads | 50,000 / day |
-| Firestore writes | 20,000 / day |
-| Firestore storage | 1 GB |
-| Authentication | Unlimited |
-| Hosting (if used) | 10 GB / month |
+| `users` | User profiles (displayName, username, bio, location, online status) |
+| `friends` | Friend relationships and request status |
+| `messages` | 1-on-1 chat messages between user pairs |
+| `events` | Events created by users, including RSVP data |
+| `moments` | Shared photos with captions |
+| `notifications` | In-app notification records per user |
 
-This is more than enough for a private app with friends.
+## Deployment
+
+Since it's a single HTML file, deploying is simple:
+
+**GitHub Pages**
+```
+# Place index.html at the root of your repo, then enable Pages in Settings > Pages
+```
+
+**Netlify / Vercel**
+Drag and drop the file into their web dashboards — no configuration needed.
+
+## Design
+
+- Dark, warm aesthetic with a gold (`#c9a96e`) accent colour
+- Responsive: bottom tab bar on mobile, collapsible sidebar on desktop (≥ 768px)
+- Safe-area aware for modern iOS devices
+- Cormorant Garamond for display text; DM Sans for UI
+
+## License
+
+MIT — use it however you like.
