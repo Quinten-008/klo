@@ -42,7 +42,7 @@ const PAL = ["#c9a96e","#9e7a8c","#7a8fa6","#6b8c6e","#a67c52","#8c8c7a","#7a6e8
 function cid(id){ let h=0; for(let i=0;i<(id||"x").length;i++) h=(id||"x").charCodeAt(i)+((h<<5)-h); return PAL[Math.abs(h)%PAL.length]; }
 function ini(n){ return(n||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(); }
 function nowTs(){ return firebase.firestore.FieldValue.serverTimestamp(); }
-function fmtTime(ts){ if(!ts) return ""; const d=ts.toDate?ts.toDate():new Date(ts); const h=d.getHours(),m=d.getMinutes(); return`${h}:${m<10?"0"+m:m}`; }
+function fmtTime(ts){ if(!ts) return ""; const d=ts.toDate?ts.toDate():new Date(ts); const h=d.getHours(),m=d.getMinutes(); return h+":"+(m<10?"0"+m:m); }
 function chatId(a,b){ return [a,b].sort().join("_"); }
 function readFileAsBase64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=e=>res(e.target.result); r.onerror=rej; r.readAsDataURL(file); }); }
 
@@ -51,7 +51,7 @@ function Av({user,size=40,dot=false}){
   const c=cid(user?.uid||user?.username||"x");
   return(
     <div style={{position:"relative",display:"inline-block",flexShrink:0}}>
-      <div style={{width:size,height:size,borderRadius:"50%",background:`linear-gradient(135deg,${c}cc,${c}44)`,border:`1.5px solid ${c}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.32,fontFamily:"'DM Sans',sans-serif",fontWeight:500,color:"#f5f0e8",userSelect:"none"}}>
+      <div style={{width:size,height:size,borderRadius:"50%",background:"linear-gradient(135deg,"+c+"cc,"+c+"44)",border:"1.5px solid "+c+"55",display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.32,fontFamily:"'DM Sans',sans-serif",fontWeight:500,color:"#f5f0e8",userSelect:"none"}}>
         {user?.photoURL
           ? <img src={user.photoURL} style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}} alt=""/>
           : ini(user?.displayName||user?.name||"?")}
@@ -653,7 +653,7 @@ function MainApp({me}){
           </div>
           <div className="ds-nav">
             {navs.map(item=>(
-              <button key={item.id} className={`ds-btn${tab===item.id?" on":""}`} onClick={()=>{setActiveChat(null);setActiveEv(null);setViewUser(null);setTab(item.id);}}>
+              <button key={item.id} className={"ds-btn"+(tab===item.id?" on":"")} onClick={()=>{setActiveChat(null);setActiveEv(null);setViewUser(null);setTab(item.id);}}>
                 <I n={item.n} s={17}/>{item.label}
                 {item.badge&&<div className="bdg"/>}
               </button>
@@ -717,7 +717,7 @@ function MainApp({me}){
                       <div className="ca">
                         {messages.length===0&&<div className="empty"><I n="chat" s={30} c="#1e1e1e"/><p>No messages yet.</p></div>}
                         {messages.map(m=>(
-                          <div key={m.id} className={`msg${m.from===me.uid?" me":""} fade`}>
+                          <div key={m.id} className={"msg"+(m.from===me.uid?" me":"")+" fade"}>
                             {m.from!==me.uid&&<Av user={peer} size={28}/>}
                             <div><div className="bbl">{m.text}</div><div className="mt">{m.createdAt?fmtTime(m.createdAt):""}</div></div>
                           </div>
@@ -736,13 +736,13 @@ function MainApp({me}){
                 const peer=activeChat?.type==="dm"?friends.find(f=>f.uid===activeChat.id):null;
                 const open=!!(activeChat&&peer);
                 return(
-                  <div className={`slide${open?" open":""}`}>
+                  <div className={"slide"+(open?" open":"")}>
                     <div className="sh"><button className="sh-back" onClick={()=>setActiveChat(null)}><I n="back" s={20}/></button>{peer&&<Av user={peer} size={32} dot/>}<div style={{flex:1}}><div className="sh-title">{peer?.displayName||""}</div><div style={{fontSize:11,color:"#3a3a3a"}}>{peer?.online?"online":"offline"}</div></div><button className="sh-action" onClick={()=>setSharingLoc(s=>!s)} style={{color:sharingLoc?"#6db87a":"#555"}}>{sharingLoc?"Stop":"Share loc"}</button></div>
                     {sharingLoc&&<div className="lbar"><div className="pulse" style={{width:7,height:7,borderRadius:"50%",background:"#6db87a"}}/><span style={{fontSize:12,color:"#6db87a"}}>Sharing live location</span><button onClick={()=>setSharingLoc(false)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#484848"}}>Stop</button></div>}
                     <div className="ca">
                       {messages.length===0&&<div className="empty"><I n="chat" s={30} c="#1e1e1e"/><p>No messages yet.</p></div>}
                       {messages.map(m=>(
-                        <div key={m.id} className={`msg${m.from===me.uid?" me":""} fade`}>
+                        <div key={m.id} className={"msg"+(m.from===me.uid?" me":"")+" fade"}>
                           {m.from!==me.uid&&peer&&<Av user={peer} size={28}/>}
                           <div><div className="bbl">{m.text}</div><div className="mt">{m.createdAt?fmtTime(m.createdAt):""}</div></div>
                         </div>
@@ -777,7 +777,7 @@ function MainApp({me}){
                   ):friends.map(u=>(
                     <div key={u.uid} className="li" style={{borderLeft:viewUser?.uid===u.uid?"2px solid #c9a96e":"2px solid transparent"}} onClick={()=>{setViewUser(u);setTab("profile");}}>
                       <Av user={u} size={44} dot/>
-                      <div style={{flex:1}}><div style={{fontSize:13,fontWeight:500,color:"#ddd8cc"}}>{u.displayName}</div><div style={{fontSize:12,color:"#484848",marginTop:1}}>@{u.username}{u.location?` · ${u.location}`:""}</div></div>
+                      <div style={{flex:1}}><div style={{fontSize:13,fontWeight:500,color:"#ddd8cc"}}>{u.displayName}</div><div style={{fontSize:12,color:"#484848",marginTop:1}}>@{u.username}{u.location?" · "+u.location:""}</div></div>
                       <button className="btn ghost" style={{fontSize:11,padding:"4px 9px"}} onClick={e=>{e.stopPropagation();setActiveChat({type:"dm",id:u.uid});setTab("chat");}}>Chat</button>
                     </div>
                   ))}
@@ -802,13 +802,13 @@ function MainApp({me}){
                     const myRsvp=ev.rsvps?.[me.uid]||"invited";
                     return(
                       <div key={ev.id} className="evc" style={{borderColor:activeEv?.id===ev.id?"#c9a96e55":"#181818"}} onClick={()=>setActiveEv(ev)}>
-                        <div className={`ecv ${ev.cover}`}/>
+                        <div className={"ecv "+ev.cover}/>
                         <div className="ecb">
                           <div style={{fontSize:13,fontWeight:500,color:"#eee8dd",marginBottom:2}}>{ev.title}</div>
-                          <div style={{fontSize:12,color:"#555"}}>{ev.date||"Date TBD"}{ev.time?` · ${ev.time}`:""}</div>
+                          <div style={{fontSize:12,color:"#555"}}>{ev.date||"Date TBD"}{ev.time?" · "+ev.time:""}</div>
                           {ev.location&&<div style={{fontSize:11,color:"#484848",display:"flex",gap:3,marginTop:2,alignItems:"center"}}><I n="pin" s={10}/>{ev.location}</div>}
                           <div style={{marginTop:7,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                            <span className={`tag t${myRsvp[0]}`}>{myRsvp}</span>
+                            <span className={"tag t"+myRsvp[0]}>{myRsvp}</span>
                             {ev.creatorUid===me.uid&&<button onClick={e=>{e.stopPropagation();deleteEvent(ev.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"#555",padding:"2px 6px",fontSize:13}}>✕</button>}
                           </div>
                         </div>
@@ -822,7 +822,7 @@ function MainApp({me}){
               <div className="desk-main">
                 {activeEv?(
                   <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-                    <div className={`ecv ${activeEv.cover}`} style={{height:160,position:"relative"}}>
+                    <div className={"ecv "+activeEv.cover} style={{height:160,position:"relative"}}>
                       <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,#090909)"}}/>
                       <div style={{position:"absolute",bottom:16,left:22,right:22,display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
                         <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:300,color:"#f5f0e8"}}>{activeEv.title}</h1>
@@ -833,7 +833,7 @@ function MainApp({me}){
                       <div>
                         <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
                           {["going","maybe","can't go"].map(r=>(
-                            <button key={r} className={`btn${(activeEv.rsvps?.[me.uid]||"invited")===r?" gold":" ghost"}`} style={{padding:"6px 16px",fontSize:13}} onClick={()=>rsvpEvent(activeEv.id,r)}>{r.charAt(0).toUpperCase()+r.slice(1)}</button>
+                            <button key={r} className={"btn"+((activeEv.rsvps?.[me.uid]||"invited")===r?" gold":" ghost")} style={{padding:"6px 16px",fontSize:13}} onClick={()=>rsvpEvent(activeEv.id,r)}>{r.charAt(0).toUpperCase()+r.slice(1)}</button>
                           ))}
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:16}}>
@@ -857,7 +857,7 @@ function MainApp({me}){
               </div>
 
               {/* mobile slide */}
-              <div className={`slide${activeEv?" open":""}`}>
+              <div className={"slide"+(activeEv?" open":"")}>
                 {activeEv&&(
                   <>
                     <div className="sh">
@@ -866,13 +866,13 @@ function MainApp({me}){
                       {activeEv.creatorUid===me.uid&&<button className="sh-action" style={{color:"#c97070"}} onClick={()=>deleteEvent(activeEv.id)}>Delete</button>}
                     </div>
                     <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-                      <div className={`ecv ${activeEv.cover}`} style={{height:120,position:"relative"}}>
+                      <div className={"ecv "+activeEv.cover} style={{height:120,position:"relative"}}>
                         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,#090909)"}}/>
                       </div>
                       <div style={{padding:"16px 18px"}}>
                         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
                           {["going","maybe","can't go"].map(r=>(
-                            <button key={r} className={`btn${(activeEv.rsvps?.[me.uid]||"invited")===r?" gold":" ghost"}`} style={{padding:"6px 13px",fontSize:13}} onClick={()=>rsvpEvent(activeEv.id,r)}>{r.charAt(0).toUpperCase()+r.slice(1)}</button>
+                            <button key={r} className={"btn"+((activeEv.rsvps?.[me.uid]||"invited")===r?" gold":" ghost")} style={{padding:"6px 13px",fontSize:13}} onClick={()=>rsvpEvent(activeEv.id,r)}>{r.charAt(0).toUpperCase()+r.slice(1)}</button>
                           ))}
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:14}}>
@@ -910,7 +910,7 @@ function MainApp({me}){
                         const isLiked=(ph.likes||[]).includes(me.uid);
                         return(
                           <div key={ph.id} className="pc">
-                            {ph.imageData?<img src={ph.imageData} alt={ph.caption}/>:<div className="pc-color" style={{background:`linear-gradient(135deg,${ph.color}88,${ph.color}22)`}}><I n="image" s={28} c={ph.color+"66"}/></div>}
+                            {ph.imageData?<img src={ph.imageData} alt={ph.caption}/>:<div className="pc-color" style={{background:"linear-gradient(135deg,"+ph.color+"88,"+ph.color+"22)"}}><I n="image" s={28} c={ph.color+"66"}/></div>}
                             <div className="pov">
                               <div style={{fontSize:11,color:"#e0dbd0",marginBottom:3,lineHeight:1.3}}>{ph.caption}</div>
                               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -940,7 +940,7 @@ function MainApp({me}){
                 <div className="desk-panel-body">
                   {notifs.length===0?<div className="empty"><I n="bell" s={36} c="#1e1e1e"/><p>Nothing here yet.</p></div>
                     :notifs.map(n=>(
-                      <div key={n.id} className={`nrow${n.unread?" ur":""}`} onClick={()=>markNotifRead(n.id)}>
+                      <div key={n.id} className={"nrow"+(n.unread?" ur":"")} onClick={()=>markNotifRead(n.id)}>
                         <Av user={{uid:n.from,displayName:n.fromName||"?"}} size={40}/>
                         <div style={{flex:1}}><div style={{fontSize:13,color:"#ccc",lineHeight:1.5}}>{n.text}</div><div style={{fontSize:11,color:"#383838",marginTop:2}}>{n.createdAt?fmtTime(n.createdAt):""}</div></div>
                         {n.unread&&<div className="ndot"/>}
@@ -984,13 +984,13 @@ function MainApp({me}){
         {/* BOTTOM NAV — mobile only */}
         <div className="bottomnav">
           {navs.map(item=>(
-            <button key={item.id} className={`bnb${tab===item.id?" on":""}`} onClick={()=>{setActiveChat(null);setActiveEv(null);setTab(item.id);}}>
+            <button key={item.id} className={"bnb"+(tab===item.id?" on":"")} onClick={()=>{setActiveChat(null);setActiveEv(null);setTab(item.id);}}>
               <I n={item.n} s={22}/>
               <span>{item.label==="Notifications"?"Alerts":item.label==="Messages"?"Chats":item.label}</span>
               {item.badge&&<div className="bdg"/>}
             </button>
           ))}
-          <button className={`bnb${tab==="profile"?" on":""}`} onClick={()=>{setViewUser(null);setTab("profile");}}>
+          <button className={"bnb"+(tab==="profile"?" on":"")} onClick={()=>{setViewUser(null);setTab("profile");}}>
             <I n="user" s={22}/>
             <span>Profile</span>
           </button>
@@ -1029,7 +1029,7 @@ function MainApp({me}){
                         <Av user={searchRes} size={46}/>
                         <div style={{flex:1}}>
                           <div style={{fontSize:14,color:"#ddd8cc",fontWeight:500}}>{searchRes.displayName}</div>
-                          <div style={{fontSize:12,color:"#555"}}>@{searchRes.username}{searchRes.location?` · ${searchRes.location}`:""}</div>
+                          <div style={{fontSize:12,color:"#555"}}>@{searchRes.username}{searchRes.location?" · "+searchRes.location:""}</div>
                           {searchRes.bio&&<div style={{fontSize:12,color:"#484848",marginTop:2}}>{searchRes.bio}</div>}
                         </div>
                         <button className="btn gold" onClick={()=>sendFriendRequest(searchRes)}>+ Add</button>
@@ -1072,7 +1072,7 @@ function MainApp({me}){
                     <button style={{background:"none",border:"none",color:"#484848",cursor:"pointer"}} onClick={()=>setModal(null)}><I n="x" s={18}/></button>
                   </div>
                   <div className="mbody">
-                    <div className={`upload-area${pImg?" has-img":""}`}>
+                    <div className={"upload-area"+(pImg?" has-img":"")}>
                       {pImg
                         ?<img src={pImg} alt="preview" style={{width:"100%",maxHeight:260,objectFit:"contain"}}/>
                         :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"32px 20px"}}>
